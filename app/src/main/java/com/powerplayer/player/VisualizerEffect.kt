@@ -66,7 +66,7 @@ class VisualizerEffect(private val audioSessionId: Int) {
             for (i in 0 until perBar) {
                 val idx = b * perBar + i
                 if (idx < waveform.size) {
-                    val amp = abs(waveform[idx]) / 127f
+                    val amp = abs(waveform[idx].toInt()) / 127f
                     sum += amp
                     if (amp > maxV) maxV = amp
                 }

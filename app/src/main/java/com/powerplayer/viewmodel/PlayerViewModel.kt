@@ -58,7 +58,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun restoreFolder() {
-        val app = getApplication()
+        val app: Application = getApplication()
         val saved = FolderPrefs.load(app) ?: return
         val uri = Uri.parse(saved)
         val granted = app.contentResolver.persistedUriPermissions.any { it.uri == uri }
