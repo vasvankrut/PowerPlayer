@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PowerPlayer</string>
+    <string name="pick_folder">Выбрать папку</string>
+    <string name="pick_folder_hint">Выберите папку с музыкой</string>
+    <string name="no_tracks">В этой папке не найдено музыки</string>
+    <string name="unknown_artist">Неизвестный исполнитель</string>
+    <string name="unknown_title">Неизвестный трек</string>
+</resources>
