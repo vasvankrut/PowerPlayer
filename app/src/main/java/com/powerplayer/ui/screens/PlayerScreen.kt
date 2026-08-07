@@ -33,7 +33,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.colorFilter
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -84,10 +83,10 @@ private fun BackgroundLayer(art: Bitmap?) {
             bitmap = art.asImageBitmap(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
+            colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }),
             modifier = Modifier
                 .fillMaxSize()
                 .blur(45.dp)
-                .colorFilter(ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }))
         )
         Box(
             Modifier

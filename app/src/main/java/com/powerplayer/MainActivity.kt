@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import com.powerplayer.ui.screens.PlayerScreen
 import com.powerplayer.ui.theme.PowerPlayerTheme
 import com.powerplayer.viewmodel.PlayerViewModel
@@ -35,12 +36,13 @@ private fun FolderPickerLauncher(
     onPickFolder: (Uri) -> Unit,
     content: @Composable (() -> Unit) -> Unit
 ) {
+    val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
-                contentResolver.takePersistableUriPermission(
+                context.contentResolver.takePersistableUriPermission(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
