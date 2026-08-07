@@ -3,13 +3,11 @@ package com.powerplayer.ui.screens
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,15 +22,17 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.powerplayer.ui.CoverFx
 import com.powerplayer.ui.components.WaveVisualizer
 import com.powerplayer.ui.theme.Black
 import com.powerplayer.ui.theme.White
@@ -69,6 +70,7 @@ fun PlayerScreen(
         BackgroundLayer(art = state.art)
 
         when {
+            state.isLoading -> LoadingView()
             !state.folderPicked -> FolderPickerView(onPickFolder)
             state.noTracks -> NoTracksView(onPickFolder)
             else -> PlayerLayout(state = state, bars = bars, viewModel = viewModel)
@@ -79,19 +81,13 @@ fun PlayerScreen(
 @Composable
 private fun BackgroundLayer(art: Bitmap?) {
     if (art != null) {
+        val bg by remember(art) { mutableStateOf(CoverFx.blurredBackground(art)) }
         Image(
-            bitmap = art.asImageBitmap(),
+            bitmap = bg.asImageBitmap(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }),
-            modifier = Modifier
-                .fillMaxSize()
-                .blur(45.dp)
-        )
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Black.copy(alpha = 0.6f))
+            modifier = Modifier.fillMaxSize()
         )
     }
 }
@@ -108,31 +104,31 @@ private fun PlayerLayout(
     } else 0f
 
     Column(Modifier.fillMaxSize()) {
-        // ── Верхняя половина: обложка, поверх неё название и исполнитель ──
+        // ── Верхняя половина: обложка на всю высоту, текст поверх неё снизу слева ──
         Box(
             Modifier
                 .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center
+                .weight(1f)
         ) {
             AlbumArt(art = state.art, modifier = Modifier.fillMaxSize())
 
             Column(
                 Modifier
-                    .align(Alignment.BottomCenter)
+                    .align(Alignment.BottomStart)
                     .fillMaxWidth()
                     .background(
-                        Brush.verticalGradient(listOf(Color.Transparent, Black.copy(alpha = 0.9f)))
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.55f to Black.copy(alpha = 0.72f)
+                        )
                     )
-                    .padding(horizontal = 24.dp, vertical = 28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(horizontal = 24.dp, vertical = 24.dp)
             ) {
                 Text(
                     text = track.title,
                     color = White,
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -141,7 +137,6 @@ private fun PlayerLayout(
                     text = track.artist,
                     color = WhiteDim,
                     fontSize = 16.sp,
-                    textAlign = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -229,31 +224,47 @@ private fun PlayerLayout(
 
 @Composable
 private fun AlbumArt(art: Bitmap?, modifier: Modifier) {
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Box(
-            Modifier
-                .fillMaxWidth(0.8f)
-                .aspectRatio(1f)
-        ) {
-            if (art != null) {
-                Image(
-                    bitmap = art.asImageBitmap(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .border(1.dp, WhiteFaint, RoundedCornerShape(16.dp))
-                        .background(White.copy(alpha = 0.04f), RoundedCornerShape(16.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("♪", color = WhiteFaint, fontSize = 120.sp)
-                }
+    Box(modifier) {
+        if (art != null) {
+            Image(
+                bitmap = art.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(White.copy(alpha = 0.05f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("♪", color = WhiteFaint, fontSize = 120.sp)
             }
         }
+    }
+}
+
+@Composable
+private fun LoadingView() {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator(
+            color = White,
+            strokeWidth = 3.dp,
+            modifier = Modifier.size(44.dp)
+        )
+        Spacer(Modifier.height(20.dp))
+        Text(
+            text = "Загружаю музыку...",
+            color = WhiteDim,
+            fontSize = 15.sp
+        )
     }
 }
 

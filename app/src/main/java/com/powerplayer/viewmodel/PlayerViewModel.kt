@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.powerplayer.data.AlbumArt
+import com.powerplayer.data.FolderPrefs
 import com.powerplayer.data.Track
 import com.powerplayer.data.TrackScanner
 import com.powerplayer.player.PlayerController
@@ -28,6 +29,7 @@ data class PlayerUiState(
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val folderPicked: Boolean = false,
+    val isLoading: Boolean = false,
     val noTracks: Boolean = false,
     val art: Bitmap? = null
 )
@@ -37,6 +39,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val player = PlayerController(app)
     private var visualizer: VisualizerEffect? = null
     private var poller: Job? = null
+    private var folderUri: Uri? = null
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -51,13 +54,26 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     init {
         player.onCompletion = { next(auto = true) }
         player.onError = { next(auto = true) }
+        restoreFolder()
+    }
+
+    private fun restoreFolder() {
+        val app = getApplication()
+        val saved = FolderPrefs.load(app) ?: return
+        val uri = Uri.parse(saved)
+        val granted = app.contentResolver.persistedUriPermissions.any { it.uri == uri }
+        if (granted) pickFolder(uri)
     }
 
     fun pickFolder(uri: Uri) {
+        folderUri = uri
+        FolderPrefs.save(getApplication(), uri.toString())
+        _state.update { it.copy(isLoading = true, noTracks = false) }
         viewModelScope.launch {
             val found = withContext(Dispatchers.IO) {
                 TrackScanner.scanFolder(getApplication(), uri)
             }
+            _state.update { it.copy(isLoading = false) }
             if (found.isEmpty()) {
                 _state.update {
                     it.copy(folderPicked = true, noTracks = true, tracks = emptyList(), currentIndex = -1)
@@ -142,12 +158,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 it.copy(isPlaying = true, durationMs = player.duration().coerceAtLeast(track.durationMs))
             }
-            attachVisualizer()
+            viewModelScope.launch { attachVisualizer() }
         }
         _state.update { it.copy(positionMs = 0, durationMs = track.durationMs, art = null) }
 
         viewModelScope.launch {
-            val bmp = withContext(Dispatchers.IO) { AlbumArt.load(getApplication(), uri) }
+            val bmp = withContext(Dispatchers.IO) { AlbumArt.load(getApplication(), uri, folderUri) }
             if (_state.value.currentIndex == index) {
                 _state.update { it.copy(art = bmp) }
             }
