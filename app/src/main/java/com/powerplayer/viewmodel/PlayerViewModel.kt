@@ -9,7 +9,6 @@ import com.powerplayer.data.AlbumArt
 import com.powerplayer.data.FolderPrefs
 import com.powerplayer.data.Track
 import com.powerplayer.data.TrackScanner
-import com.powerplayer.data.Waveform
 import com.powerplayer.player.PlayerController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,7 +38,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val player = PlayerController(app)
     private var poller: Job? = null
     private var folderUri: Uri? = null
-    private val waveformCache = mutableMapOf<String, FloatArray>()
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -54,6 +52,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     init {
         player.onCompletion = { next(auto = true) }
         player.onError = { next(auto = true) }
+        viewModelScope.launch {
+            player.bars.collect { _bars.value = it }
+        }
         restoreFolder()
     }
 
@@ -149,8 +150,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val track = s.tracks.getOrNull(index) ?: return
 
-        _bars.value = emptyList()
-
         val uri = Uri.parse(track.uri)
         player.play(uri) {
             _state.update {
@@ -166,26 +165,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        loadWaveform(uri, index)
-
         startPositionPoller()
-    }
-
-    private fun loadWaveform(uri: Uri, index: Int) {
-        viewModelScope.launch {
-            val key = uri.toString()
-            val cached = waveformCache[key]
-            val bars = if (cached != null) {
-                cached
-            } else {
-                withContext(Dispatchers.IO) {
-                    Waveform.compute(getApplication(), uri) ?: FloatArray(0)
-                }.also { waveformCache[key] = it }
-            }
-            if (_state.value.currentIndex == index && bars.isNotEmpty()) {
-                _bars.value = bars.toList()
-            }
-        }
     }
 
     private fun startPositionPoller() {

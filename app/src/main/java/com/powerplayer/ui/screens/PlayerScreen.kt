@@ -161,7 +161,7 @@ private fun PlayerLayout(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
-                        .fillMaxHeight(0.6f)
+                        .fillMaxHeight(0.85f)
                         .padding(horizontal = 28.dp)
                 )
 

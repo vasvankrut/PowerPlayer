@@ -58,7 +58,7 @@ fun WaveVisualizer(
         }
 
         val centerY = size.height / 2f
-        val maxAmplitude = size.height * 0.44f
+        val maxAmplitude = size.height * 0.5f
         val gap = size.width * 0.03f
         val barWidth = (size.width - gap * (bars.size - 1)) / bars.size
         val playedX = size.width * progressFraction
