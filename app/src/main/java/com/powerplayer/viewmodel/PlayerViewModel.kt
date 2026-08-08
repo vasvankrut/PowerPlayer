@@ -38,6 +38,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val player = PlayerController(app)
     private var visualizer: VisualizerEffect? = null
+    private var visualizerJob: Job? = null
     private var poller: Job? = null
     private var folderUri: Uri? = null
 
@@ -151,6 +152,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
         visualizer?.release()
         visualizer = null
+        visualizerJob?.cancel()
         _bars.value = emptyList()
 
         val uri = Uri.parse(track.uri)
@@ -158,7 +160,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 it.copy(isPlaying = true, durationMs = player.duration().coerceAtLeast(track.durationMs))
             }
-            viewModelScope.launch { attachVisualizer() }
+            visualizerJob = viewModelScope.launch { attachVisualizer() }
         }
         _state.update { it.copy(positionMs = 0, durationMs = track.durationMs, art = null) }
 
@@ -172,12 +174,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         startPositionPoller()
     }
 
-    private fun attachVisualizer() {
-        val v = VisualizerEffect(player.audioSessionId)
-        visualizer = v
-        v.attach()
-        viewModelScope.launch {
-            v.bars.collect { _bars.value = it }
+    private suspend fun attachVisualizer() {
+        repeat(10) {
+            val session = player.audioSessionId
+            if (session != 0) {
+                val v = VisualizerEffect(session)
+                if (v.attach()) {
+                    visualizer = v
+                    v.bars.collect { _bars.value = it }
+                    return
+                }
+            }
+            delay(200)
         }
     }
 
@@ -200,6 +208,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         poller?.cancel()
+        visualizerJob?.cancel()
         visualizer?.release()
         player.release()
         super.onCleared()

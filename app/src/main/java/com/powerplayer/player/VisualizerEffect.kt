@@ -4,7 +4,6 @@ import android.media.audiofx.Visualizer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.math.abs
 
 class VisualizerEffect(private val audioSessionId: Int) {
 
@@ -14,16 +13,22 @@ class VisualizerEffect(private val audioSessionId: Int) {
     private val _bars = MutableStateFlow<List<Float>>(emptyList())
     val bars: StateFlow<List<Float>> = _bars.asStateFlow()
 
-    fun attach() {
-        if (audioSessionId == 0) return
+    /** @return true если визуализатор создан и включён */
+    fun attach(): Boolean {
+        if (audioSessionId == 0) return false
+
         val v = try {
             Visualizer(audioSessionId)
         } catch (_: Exception) {
-            return
+            return false
         }
         visualizer = v
-        try {
-            v.setCaptureSize(Visualizer.getCaptureSizeRange()[1])
+
+        return try {
+            val range = Visualizer.getCaptureSizeRange()
+            if (v.setCaptureSize(range[1]) < 0) {
+                v.setCaptureSize(range[0])
+            }
             v.setScalingMode(Visualizer.SCALING_MODE_NORMALIZED)
             v.setDataCaptureListener(
                 object : Visualizer.OnDataCaptureListener {
@@ -46,8 +51,11 @@ class VisualizerEffect(private val audioSessionId: Int) {
                 false
             )
             v.enabled = true
+            true
         } catch (_: Exception) {
-            // визуализация опциональна — при ошибке просто не показываем волну
+            v.release()
+            visualizer = null
+            false
         }
     }
 
@@ -66,7 +74,8 @@ class VisualizerEffect(private val audioSessionId: Int) {
             for (i in 0 until perBar) {
                 val idx = b * perBar + i
                 if (idx < waveform.size) {
-                    val amp = abs(waveform[idx].toInt()) / 127f
+                    // waveform приходит беззнаковыми байтами 0..255
+                    val amp = (waveform[idx].toInt() and 0xFF) / 255f
                     sum += amp
                     if (amp > maxV) maxV = amp
                 }
