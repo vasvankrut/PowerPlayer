@@ -1,10 +1,7 @@
 package com.powerplayer
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,7 +10,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
 import com.powerplayer.ui.screens.PlayerScreen
 import com.powerplayer.ui.theme.PowerPlayerTheme
 import com.powerplayer.viewmodel.PlayerViewModel
@@ -22,32 +18,14 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: PlayerViewModel by viewModels()
 
-    private val recordAudioPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) viewModel.onRecordingPermissionGranted()
-        }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestRecordAudioPermission()
         setContent {
             PowerPlayerTheme {
                 FolderPickerLauncher(
                     onPickFolder = { viewModel.pickFolder(it) },
                     content = { launch -> PlayerScreen(viewModel = viewModel, onPickFolder = launch) }
                 )
-            }
-        }
-    }
-
-    private fun requestRecordAudioPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-            if (granted) {
-                viewModel.onRecordingPermissionGranted()
-            } else {
-                recordAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
     }

@@ -9,8 +9,8 @@ import com.powerplayer.data.AlbumArt
 import com.powerplayer.data.FolderPrefs
 import com.powerplayer.data.Track
 import com.powerplayer.data.TrackScanner
+import com.powerplayer.data.Waveform
 import com.powerplayer.player.PlayerController
-import com.powerplayer.player.VisualizerEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -37,10 +37,9 @@ data class PlayerUiState(
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val player = PlayerController(app)
-    private var visualizer: VisualizerEffect? = null
-    private var visualizerJob: Job? = null
     private var poller: Job? = null
     private var folderUri: Uri? = null
+    private val waveformCache = mutableMapOf<String, FloatArray>()
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -150,9 +149,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val track = s.tracks.getOrNull(index) ?: return
 
-        visualizer?.release()
-        visualizer = null
-        visualizerJob?.cancel()
         _bars.value = emptyList()
 
         val uri = Uri.parse(track.uri)
@@ -160,7 +156,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 it.copy(isPlaying = true, durationMs = player.duration().coerceAtLeast(track.durationMs))
             }
-            visualizerJob = viewModelScope.launch { attachVisualizer() }
         }
         _state.update { it.copy(positionMs = 0, durationMs = track.durationMs, art = null) }
 
@@ -171,30 +166,26 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
+        loadWaveform(uri, index)
+
         startPositionPoller()
     }
 
-    private suspend fun attachVisualizer() {
-        repeat(20) {
-            val session = player.audioSessionId
-            if (session != 0) {
-                val v = VisualizerEffect(session)
-                if (v.attach()) {
-                    visualizer = v
-                    v.bars.collect { _bars.value = it }
-                    return
-                }
+    private fun loadWaveform(uri: Uri, index: Int) {
+        viewModelScope.launch {
+            val key = uri.toString()
+            val cached = waveformCache[key]
+            val bars = if (cached != null) {
+                cached
+            } else {
+                withContext(Dispatchers.IO) {
+                    Waveform.compute(getApplication(), uri) ?: FloatArray(0)
+                }.also { waveformCache[key] = it }
             }
-            delay(250)
+            if (_state.value.currentIndex == index && bars.isNotEmpty()) {
+                _bars.value = bars.toList()
+            }
         }
-    }
-
-    fun onRecordingPermissionGranted() {
-        if (!_state.value.isPlaying) return
-        visualizer?.release()
-        visualizer = null
-        visualizerJob?.cancel()
-        visualizerJob = viewModelScope.launch { attachVisualizer() }
     }
 
     private fun startPositionPoller() {
@@ -216,8 +207,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         poller?.cancel()
-        visualizerJob?.cancel()
-        visualizer?.release()
         player.release()
         super.onCleared()
     }
