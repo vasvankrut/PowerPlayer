@@ -175,7 +175,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun attachVisualizer() {
-        repeat(10) {
+        repeat(20) {
             val session = player.audioSessionId
             if (session != 0) {
                 val v = VisualizerEffect(session)
@@ -185,8 +185,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     return
                 }
             }
-            delay(200)
+            delay(250)
         }
+    }
+
+    fun onRecordingPermissionGranted() {
+        if (!_state.value.isPlaying) return
+        visualizer?.release()
+        visualizer = null
+        visualizerJob?.cancel()
+        visualizerJob = viewModelScope.launch { attachVisualizer() }
     }
 
     private fun startPositionPoller() {
