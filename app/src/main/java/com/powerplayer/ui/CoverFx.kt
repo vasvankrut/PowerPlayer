@@ -8,7 +8,7 @@ object CoverFx {
 
     fun blurredBackground(src: Bitmap): Bitmap {
         val side = minOf(src.width, src.height)
-        val down = maxOf(80, side / 8)
+        val down = maxOf(48, side / 16)
         val w = maxOf(1, down)
         val h = maxOf(1, (src.height.toFloat() / src.width * w).toInt())
 
