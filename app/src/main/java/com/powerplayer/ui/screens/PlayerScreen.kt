@@ -49,6 +49,7 @@ import com.powerplayer.ui.theme.Black
 import com.powerplayer.ui.theme.White
 import com.powerplayer.ui.theme.WhiteDim
 import com.powerplayer.ui.theme.WhiteFaint
+import com.powerplayer.viewmodel.EnergySample
 import com.powerplayer.viewmodel.PlayerUiState
 import com.powerplayer.viewmodel.PlayerViewModel
 
@@ -58,7 +59,7 @@ fun PlayerScreen(
     onPickFolder: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val bars by viewModel.bars.collectAsStateWithLifecycle()
+    val samples by viewModel.samples.collectAsStateWithLifecycle()
 
     Box(
         modifier = Modifier
@@ -71,7 +72,7 @@ fun PlayerScreen(
             state.isLoading -> LoadingView()
             !state.folderPicked -> FolderPickerView(onPickFolder)
             state.noTracks -> NoTracksView(onPickFolder)
-            else -> PlayerLayout(state = state, bars = bars, viewModel = viewModel)
+            else -> PlayerLayout(state = state, samples = samples, viewModel = viewModel)
         }
     }
 }
@@ -92,7 +93,7 @@ private fun BackgroundLayer(art: Bitmap?) {
 @Composable
 private fun PlayerLayout(
     state: PlayerUiState,
-    bars: List<Float>,
+    samples: List<EnergySample>,
     viewModel: PlayerViewModel
 ) {
     val track = state.tracks.getOrNull(state.currentIndex) ?: return
@@ -153,7 +154,8 @@ private fun PlayerLayout(
                     .weight(1f)
             ) {
                 WaveVisualizer(
-                    bars = bars,
+                    samples = samples,
+                    durationMs = state.durationMs,
                     progressFraction = progress,
                     onSeekStart = viewModel::onSeekStart,
                     onSeekPreview = viewModel::onSeekPreview,

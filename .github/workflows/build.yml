@@ -38,12 +38,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view v0.1.0-alpha --repo "${{ github.repository }}" &>/dev/null; then
-            gh release upload v0.1.0-alpha app/build/outputs/apk/debug/*.apk \
+          if gh release view v0.1.9 --repo "${{ github.repository }}" &>/dev/null; then
+            gh release upload v0.1.9 app/build/outputs/apk/debug/*.apk \
               --clobber --repo "${{ github.repository }}"
           else
-            gh release create v0.1.0-alpha app/build/outputs/apk/debug/*.apk \
-              --title "PowerPlayer v0.1.0 Alpha" \
-              --notes "Чёрно-белый плеер. Выбор папки, MP3/FLAC, визуализация + перемотка по волне." \
+            gh release create v0.1.9 app/build/outputs/apk/debug/*.apk \
+              --title "PowerPlayer v0.1.9" \
+              --notes "Бегущая лента: визуализатор пишет громкость одной точкой на линии прогресса и уплывает влево (сейсмограф-история), справа — серая тишина." \
               --repo "${{ github.repository }}"
           fi

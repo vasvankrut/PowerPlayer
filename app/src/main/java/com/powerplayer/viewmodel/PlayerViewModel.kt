@@ -21,6 +21,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+data class EnergySample(
+    val positionMs: Long,
+    val value: Float
+)
+
 data class PlayerUiState(
     val tracks: List<Track> = emptyList(),
     val currentIndex: Int = -1,
@@ -42,8 +47,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
-    private val _bars = MutableStateFlow<List<Float>>(emptyList())
-    val bars: StateFlow<List<Float>> = _bars.asStateFlow()
+    private val _samples = MutableStateFlow<List<EnergySample>>(emptyList())
+    val samples: StateFlow<List<EnergySample>> = _samples.asStateFlow()
 
     @Volatile
     var dragging = false
@@ -53,7 +58,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         player.onCompletion = { next(auto = true) }
         player.onError = { next(auto = true) }
         viewModelScope.launch {
-            player.bars.collect { _bars.value = it }
+            player.energy.collect { value ->
+                val pos = player.energyPosMs.value
+                _samples.update { list ->
+                    if (list.isNotEmpty() && list.last().positionMs == pos) {
+                        list.dropLast(1) + EnergySample(pos, value)
+                    } else {
+                        list + EnergySample(pos, value)
+                    }
+                }
+            }
         }
         restoreFolder()
     }
@@ -144,6 +158,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val target = (dur * fraction.coerceIn(0f, 1f)).toLong()
         player.seekTo(target)
         _state.update { it.copy(positionMs = target) }
+        _samples.update { list ->
+            list.filter { it.positionMs < target - 700L }
+        }
     }
 
     private fun playTrack(index: Int) {
@@ -151,6 +168,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val track = s.tracks.getOrNull(index) ?: return
 
         val uri = Uri.parse(track.uri)
+        _samples.value = emptyList()
         player.play(uri) {
             _state.update {
                 it.copy(isPlaying = true, durationMs = player.duration().coerceAtLeast(track.durationMs))
