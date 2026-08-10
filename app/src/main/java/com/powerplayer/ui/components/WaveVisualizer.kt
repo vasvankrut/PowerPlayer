@@ -18,16 +18,17 @@ import androidx.compose.ui.unit.dp
 import com.powerplayer.viewmodel.EnergySample
 
 /**
- * «Бегущая лента»: каждая новая высота (громкость/бас) «записывается» одной точкой
- * на линии прогресса и уплывает влево, образуя сейсмограф-историю трека.
- * Слева от ползунка — ярко-белая история, справа — серая тишина (ещё не сыгранное).
+ * «Бегущая лента» (сейсмограф): новая высота (громкость/бас) записывается одной точкой
+ * на линии прогресса и уплывает влево в историю.
+ *  - Слева от ползунка: ярко-белая, статичная по высоте история уже сыгранных секунд.
+ *  - На линии ползунка: живая пульсирующая полоска.
+ *  - Справа от ползунка: плоская серая линия тишины (трек ещё не сыгран — ничего не прыгает).
  */
 @Composable
 fun WaveVisualizer(
     samples: List<EnergySample>,
     durationMs: Long,
     progressFraction: Float,
-    barCount: Int = 120,
     onSeekStart: () -> Unit,
     onSeekPreview: (Float) -> Unit,
     onSeekCommit: (Float) -> Unit,
@@ -69,18 +70,22 @@ fun WaveVisualizer(
             return@Canvas
         }
 
-        val count = barCount.coerceAtLeast(16)
-        val timePerBar = durationMs.toFloat() / count
-        val gap = 1.dp.toPx()
-        val slot = (width - gap * (count - 1)) / count
-        val barWidth = slot.coerceAtLeast(1.5f)
+        // Шаг 1 — история: только сыгранные сэмплы (всё, что «в будущем», исключается).
+        val currentMs = durationMs * progressFraction
+        val history = samples.filter { it.positionMs <= currentMs }
+
+        // Шаг 2 — ширина полоски 3-4px, зазор 2px (плотная расчёска, как в Poweramp).
+        val barWidth = 3.5.dp.toPx()
+        val gap = 2.dp.toPx()
         val barStep = barWidth + gap
+        val count = (width / barStep).toInt().coerceIn(8, 512)
+
+        val timePerBar = durationMs.toFloat() / count
 
         val centerY = height / 2f
         val maxAmp = height * 0.5f
         val cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
 
-        val currentMs = durationMs * progressFraction
         val currentIndex = (currentMs / timePerBar).toInt().coerceIn(0, count - 1)
 
         val historyColor = Color.White.copy(alpha = 0.92f)
@@ -88,19 +93,19 @@ fun WaveVisualizer(
         val unplayedColor = Color(0xFF9E9E9E).copy(alpha = 0.38f)
 
         fun peakInWindow(loMs: Float, hiMs: Float): Float {
-            if (samples.isEmpty()) return 0f
+            if (history.isEmpty()) return 0f
             var lo = 0
-            var hi = samples.size - 1
+            var hi = history.size - 1
             val a = (loMs * 1.002f).toLong()
             val b = (hiMs * 1.002f).toLong()
             while (lo < hi) {
                 val mid = (lo + hi) / 2
-                if (samples[mid].positionMs < a) lo = mid + 1 else hi = mid
+                if (history[mid].positionMs < a) lo = mid + 1 else hi = mid
             }
             var best = 0f
             var i = lo
-            while (i < samples.size && samples[i].positionMs <= b) {
-                if (samples[i].value > best) best = samples[i].value
+            while (i < history.size && history[i].positionMs <= b) {
+                if (history[i].value > best) best = history[i].value
                 i++
             }
             return best
@@ -114,19 +119,21 @@ fun WaveVisualizer(
             strokeWidth = 1f
         )
 
+        // Шаг 3 — разделение по оси X: слева белая история, на ползунке пульс, справа тишина.
         for (i in 0 until count) {
             val lo = i * timePerBar
             val hi = (i + 1) * timePerBar
-            val amp = peakInWindow(lo, hi) * maxAmp
             val x = i * barStep
 
             val isFuture = i > currentIndex
+            // Будущее справа: всегда ноль — только плоская серая «тишина».
+            val amp = if (isFuture) 0f else peakInWindow(lo, hi) * maxAmp
             val barColor = when {
                 i == currentIndex -> playedColor
                 isFuture -> unplayedColor
                 else -> historyColor
             }
-            val h = (amp + baseline).coerceAtLeast(2.5f)
+            val h = (amp + baseline).coerceAtLeast(if (isFuture) 1.5f else 2.5f)
 
             if (i == currentIndex) {
                 drawRoundRect(

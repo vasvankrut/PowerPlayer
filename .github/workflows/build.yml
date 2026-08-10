@@ -38,12 +38,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view v0.1.9 --repo "${{ github.repository }}" &>/dev/null; then
-            gh release upload v0.1.9 app/build/outputs/apk/debug/*.apk \
+          if gh release view v0.1.10 --repo "${{ github.repository }}" &>/dev/null; then
+            gh release upload v0.1.10 app/build/outputs/apk/debug/*.apk \
               --clobber --repo "${{ github.repository }}"
           else
-            gh release create v0.1.9 app/build/outputs/apk/debug/*.apk \
-              --title "PowerPlayer v0.1.9" \
-              --notes "Бегущая лента: визуализатор пишет громкость одной точкой на линии прогресса и уплывает влево (сейсмограф-история), справа — серая тишина." \
+            gh release create v0.1.10 app/build/outputs/apk/debug/*.apk \
+              --title "PowerPlayer v0.1.10" \
+              --notes "Бегущая лента исправлена: правая часть — плоская серая тишина (не прыгает), слева от ползунка белая история, на ползунке пульс." \
               --repo "${{ github.repository }}"
           fi
