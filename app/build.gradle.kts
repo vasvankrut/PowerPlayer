@@ -11,8 +11,8 @@ android {
         applicationId = "com.powerplayer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.1.6"
+        versionCode = 7
+        versionName = "0.1.7"
     }
 
     buildTypes {

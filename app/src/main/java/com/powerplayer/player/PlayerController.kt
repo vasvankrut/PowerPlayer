@@ -327,6 +327,6 @@ class PlayerController(private val context: Context) {
     }
 
     private companion object {
-        const val BAR_COUNT = 64
+        const val BAR_COUNT = 96
     }
 }

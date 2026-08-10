@@ -9,10 +9,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun WaveVisualizer(
@@ -59,18 +61,22 @@ fun WaveVisualizer(
 
         val centerY = size.height / 2f
         val maxAmplitude = size.height * 0.5f
-        val gap = size.width * 0.03f
-        val barWidth = (size.width - gap * (bars.size - 1)) / bars.size
+        val gap = 1.dp.toPx()
+        val barWidth = ((size.width - gap * (bars.size - 1)) / bars.size).coerceAtLeast(1f)
+        val cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+        val playedColor = Color.White
+        val unplayedColor = Color(0xFF9E9E9E).copy(alpha = 0.4f)
         val playedX = size.width * progressFraction
 
         for (i in bars.indices) {
             val x = i * (barWidth + gap)
             val amp = bars[i] * maxAmplitude
-            val played = x <= playedX
-            drawRect(
-                color = if (played) Color.White else Color.White.copy(alpha = 0.3f),
+            val played = x + barWidth / 2f <= playedX
+            drawRoundRect(
+                color = if (played) playedColor else unplayedColor,
                 topLeft = Offset(x, centerY - amp),
-                size = Size(barWidth, amp * 2)
+                size = Size(barWidth, amp * 2f),
+                cornerRadius = cornerRadius
             )
         }
     }
