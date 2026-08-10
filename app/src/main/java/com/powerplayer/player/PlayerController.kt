@@ -12,18 +12,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.nio.ByteOrder
-import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Собственный конвейер проигрывания: MediaExtractor -> MediaCodec -> AudioTrack.
- * PCM-сэмплы, которые мы сами отдаём в AudioTrack, используются для живой визуализации.
+ * PCM-сэмплы, которые мы сами отдаём в AudioTrack, используются для живого
+ * частотного спектрометра (FFT): левая часть — басы, правая — высокие частоты.
  * Не требует ни одного разрешения.
  */
 class PlayerController(private val context: Context) {
 
     private val _bars = MutableStateFlow<List<Float>>(emptyList())
     val bars: StateFlow<List<Float>> = _bars.asStateFlow()
-    private val smooth = FloatArray(BAR_COUNT)
+    private val smoothed = FloatArray(BAR_COUNT)
+    private val peaks = FloatArray(BAR_COUNT) { 1f }
+    private val window = FloatArray(FFT_N)
+    private var windowFill = 0
 
     @Volatile
     private var extractor: MediaExtractor? = null
@@ -41,6 +49,8 @@ class PlayerController(private val context: Context) {
     private var playing = false
     @Volatile
     private var sampleRate = 44100
+    @Volatile
+    private var channelCount = 2
     @Volatile
     private var durationMs = 0L
     @Volatile
@@ -65,9 +75,11 @@ class PlayerController(private val context: Context) {
         seekBaseMs = 0L
         seekBaseFrames = 0L
         durationMs = 0L
-        smooth.fill(0f)
+        smoothed.fill(0f)
+        peaks.fill(1f)
+        window.fill(0f)
+        windowFill = 0
         _bars.value = emptyList()
-
         val thread = Thread {
             try {
                 setup(uri)
@@ -148,6 +160,7 @@ class PlayerController(private val context: Context) {
         val channels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
             format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         } else 2
+        channelCount = channels
         val channelMask = if (channels >= 2) {
             AudioFormat.CHANNEL_OUT_STEREO
         } else {
@@ -219,7 +232,7 @@ class PlayerController(private val context: Context) {
                     val outBuf = cd.getOutputBuffer(outIdx)!!
                     val pcm = ShortArray(info.size / 2)
                     outBuf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(pcm)
-                    emitBars(pcm)
+                    appendPcm(pcm)
                     at.write(pcm, 0, pcm.size)
                 }
                 cd.releaseOutputBuffer(outIdx, false)
@@ -265,30 +278,114 @@ class PlayerController(private val context: Context) {
         }
     }
 
-    private fun emitBars(pcm: ShortArray) {
-        if (pcm.isEmpty()) return
-        val perBar = maxOf(1, pcm.size / BAR_COUNT)
+    private fun appendPcm(pcm: ShortArray) {
+        val ch = channelCount
+        var i = 0
+        while (windowFill < FFT_N && i < pcm.size) {
+            val mono = if (ch >= 2 && i + 1 < pcm.size) {
+                (pcm[i].toFloat() + pcm[i + 1].toFloat()) / 2f / 32768f
+            } else {
+                pcm[i].toFloat() / 32768f
+            }
+            window[windowFill++] = mono
+            i += ch
+        }
+        if (windowFill >= FFT_N) {
+            emitSpectrum()
+            System.arraycopy(window, FFT_N / 2, window, 0, FFT_N / 2)
+            windowFill = FFT_N / 2
+        }
+    }
+
+    private fun emitSpectrum() {
+        val re = FloatArray(FFT_N)
+        val im = FloatArray(FFT_N)
+        for (k in 0 until FFT_N) re[k] = window[k]
+        fft(re, im)
+
+        val mag = FloatArray(FFT_N / 2)
+        for (k in 0 until FFT_N / 2) {
+            val r = re[k] / FFT_N
+            val i = im[k] / FFT_N
+            mag[k] = sqrt(r * r + i * i)
+        }
+
+        val nyquist = sampleRate / 2
+        val fMin = 20f
+        val fMax = minOf(nyquist.toFloat(), 20000f)
+        val logRatio = ln(fMax / fMin)
+
         val raw = FloatArray(BAR_COUNT)
         for (b in 0 until BAR_COUNT) {
-            var maxV = 0f
+            val fLo = fMin * exp(logRatio * b.toFloat() / BAR_COUNT)
+            val fHi = fMin * exp(logRatio * (b + 1).toFloat() / BAR_COUNT)
+            val binLo = (fLo / nyquist * FFT_N).toInt().coerceIn(1, FFT_N / 2 - 1)
+            val binHi = (fHi / nyquist * FFT_N).toInt().coerceIn(binLo, FFT_N / 2 - 1)
             var sum = 0f
-            var i = b * perBar
-            val end = minOf(i + perBar, pcm.size)
-            while (i < end) {
-                val a = abs(pcm[i].toInt()) / 32768f
-                if (a > maxV) maxV = a
-                sum += a
-                i++
+            for (bin in binLo..binHi) {
+                sum += mag[bin]
             }
-            val n = maxOf(1, end - b * perBar)
-            raw[b] = (maxV * 0.7f + (sum / n) * 0.3f).coerceIn(0f, 1f)
+            raw[b] = sum / (binHi - binLo + 1)
         }
+
         val out = FloatArray(BAR_COUNT)
         for (b in 0 until BAR_COUNT) {
-            smooth[b] += (raw[b] * 1.25f - smooth[b]) * 0.45f
-            out[b] = smooth[b].coerceIn(0f, 1f)
+            val v = raw[b] * SPECTRUM_GAIN
+            val decayed = peaks[b] * PEAK_DECAY
+            peaks[b] = maxOf(decayed, v, 1e-4f)
+            smoothed[b] += (v / peaks[b] - smoothed[b]) * SMOOTH
+            out[b] = smoothed[b].coerceIn(0f, 1f)
         }
         _bars.value = out.toList()
+    }
+
+    private fun fft(re: FloatArray, im: FloatArray) {
+        val n = re.size
+        var j = 0
+        for (i in 1 until n) {
+            var bit = n shr 1
+            while (j and bit != 0) {
+                j = j xor bit
+                bit = bit shr 1
+            }
+            j = j xor bit
+            if (i < j) {
+                var t = re[i]
+                re[i] = re[j]
+                re[j] = t
+                t = im[i]
+                im[i] = im[j]
+                im[j] = t
+            }
+        }
+        var len = 2
+        while (len <= n) {
+            val ang = -2.0 * Math.PI / len
+            val wRe = cos(ang).toFloat()
+            val wIm = sin(ang).toFloat()
+            var i = 0
+            while (i < n) {
+                var curRe = 1f
+                var curIm = 0f
+                for (k in 0 until len / 2) {
+                    val idx = i + k
+                    val uRe = re[idx]
+                    val uIm = im[idx]
+                    val o = idx + len / 2
+                    val vRe = re[o] * curRe - im[o] * curIm
+                    val vIm = re[o] * curIm + im[o] * curRe
+                    re[idx] = uRe + vRe
+                    im[idx] = uIm + vIm
+                    re[o] = uRe - vRe
+                    im[o] = uIm - vIm
+                    val ncRe = curRe * wRe - curIm * wIm
+                    curIm = curRe * wIm + curIm * wRe
+                    curRe = ncRe
+                }
+                i += len
+            }
+            len = len shl 1
+        }
     }
 
     private fun stopInternal() {
@@ -328,5 +425,9 @@ class PlayerController(private val context: Context) {
 
     private companion object {
         const val BAR_COUNT = 96
+        const val FFT_N = 2048
+        const val SPECTRUM_GAIN = 4f
+        const val PEAK_DECAY = 0.98f
+        const val SMOOTH = 0.35f
     }
 }
