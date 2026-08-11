@@ -18,17 +18,17 @@ import androidx.compose.ui.unit.dp
 import com.powerplayer.viewmodel.EnergySample
 
 /**
- * «Бегущая лента» (сейсмограф): новая высота (громкость/бас) записывается одной точкой
- * на линии прогресса и уплывает влево в историю.
- *  - Слева от ползунка: ярко-белая, статичная по высоте история уже сыгранных секунд.
- *  - На линии ползунка: живая пульсирующая полоска.
- *  - Справа от ползунка: плоская серая линия тишины (трек ещё не сыгран — ничего не прыгает).
+ * «Бегущая лента» (сейсмограф): экран разбит на неподвижную сетку слотов на всю ширину.
+ *  - i < currentIndex: ярко-белая, статичная по высоте история уже сыгранных секунд.
+ *  - i == currentIndex: живой пульс (линия прогресса едет слева направо).
+ *  - i > currentIndex: плоские серые «будущие» слоты — тишина, которая съедается ползунком.
  */
 @Composable
 fun WaveVisualizer(
     samples: List<EnergySample>,
     durationMs: Long,
     progressFraction: Float,
+    liveEnergy: Float,
     onSeekStart: () -> Unit,
     onSeekPreview: (Float) -> Unit,
     onSeekCommit: (Float) -> Unit,
@@ -70,23 +70,23 @@ fun WaveVisualizer(
             return@Canvas
         }
 
-        // Шаг 1 — история: только сыгранные сэмплы (всё, что «в будущем», исключается).
-        val currentMs = durationMs * progressFraction
-        val history = samples.filter { it.positionMs <= currentMs }
-
-        // Шаг 2 — ширина полоски 3-4px, зазор 2px (плотная расчёска, как в Poweramp).
+        // Шаг 1 — фиксированная сетка на всю ширину экрана.
         val barWidth = 3.5.dp.toPx()
         val gap = 2.dp.toPx()
         val barStep = barWidth + gap
         val count = (width / barStep).toInt().coerceIn(8, 512)
-
         val timePerBar = durationMs.toFloat() / count
+
+        // Шаг 2 — текущая позиция воспроизведения на экране (едет слева направо).
+        val currentIndex = (count * progressFraction).toInt().coerceIn(0, count - 1)
+
+        // История — только сыгранные сэмплы (всё, что «в будущем», исключается).
+        val currentMs = durationMs * progressFraction
+        val history = samples.filter { it.positionMs <= currentMs }
 
         val centerY = height / 2f
         val maxAmp = height * 0.5f
         val cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
-
-        val currentIndex = (currentMs / timePerBar).toInt().coerceIn(0, count - 1)
 
         val historyColor = Color.White.copy(alpha = 0.92f)
         val playedColor = Color.White
@@ -119,23 +119,29 @@ fun WaveVisualizer(
             strokeWidth = 1f
         )
 
-        // Шаг 3 — разделение по оси X: слева белая история, на ползунке пульс, справа тишина.
+        // Шаг 3 — высота и цвет по месту слота относительно currentIndex.
         for (i in 0 until count) {
             val lo = i * timePerBar
             val hi = (i + 1) * timePerBar
             val x = i * barStep
 
             val isFuture = i > currentIndex
-            // Будущее справа: всегда ноль — только плоская серая «тишина».
-            val amp = if (isFuture) 0f else peakInWindow(lo, hi) * maxAmp
+            val isCurrent = i == currentIndex
+
+            val amp = when {
+                isFuture -> 0f
+                isCurrent -> liveEnergy.coerceIn(0f, 1f)
+                else -> peakInWindow(lo, hi)
+            } * maxAmp
+
             val barColor = when {
-                i == currentIndex -> playedColor
+                isCurrent -> playedColor
                 isFuture -> unplayedColor
                 else -> historyColor
             }
             val h = (amp + baseline).coerceAtLeast(if (isFuture) 1.5f else 2.5f)
 
-            if (i == currentIndex) {
+            if (isCurrent) {
                 drawRoundRect(
                     color = playedColor.copy(alpha = 0.25f),
                     topLeft = Offset(x - barWidth, centerY - h * 1.7f),

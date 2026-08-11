@@ -228,7 +228,7 @@ class PlayerController(private val context: Context) {
                     val outBuf = cd.getOutputBuffer(outIdx)!!
                     val pcm = ShortArray(info.size / 2)
                     outBuf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(pcm)
-                    appendPcm(pcm)
+                    appendPcm(pcm, info.presentationTimeUs)
                     at.write(pcm, 0, pcm.size)
                 }
                 cd.releaseOutputBuffer(outIdx, false)
@@ -276,7 +276,7 @@ class PlayerController(private val context: Context) {
         }
     }
 
-    private fun appendPcm(pcm: ShortArray) {
+    private fun appendPcm(pcm: ShortArray, presentationTimeUs: Long) {
         val ch = channelCount
         var i = 0
         var sumSq = 0.0
@@ -297,7 +297,7 @@ class PlayerController(private val context: Context) {
         rms = (rms / energyPeak).coerceIn(0f, 1f)
         energySmooth += (rms - energySmooth) * 0.55f
         _energy.value = sqrt(energySmooth)
-        _energyPosMs.value = currentPosition()
+        _energyPosMs.value = if (presentationTimeUs > 0) presentationTimeUs / 1000L else currentPosition()
     }
 
     private fun stopInternal() {

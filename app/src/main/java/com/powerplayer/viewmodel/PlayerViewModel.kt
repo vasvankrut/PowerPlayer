@@ -50,6 +50,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _samples = MutableStateFlow<List<EnergySample>>(emptyList())
     val samples: StateFlow<List<EnergySample>> = _samples.asStateFlow()
 
+    val energy: StateFlow<Float> = player.energy
+
     @Volatile
     var dragging = false
         private set

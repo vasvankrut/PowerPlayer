@@ -38,12 +38,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view v0.1.10 --repo "${{ github.repository }}" &>/dev/null; then
-            gh release upload v0.1.10 app/build/outputs/apk/debug/*.apk \
+          cp app/build/outputs/apk/debug/app-debug.apk PowerPlayer-v0.1.11.apk
+          if gh release view v0.1.11 --repo "${{ github.repository }}" &>/dev/null; then
+            gh release upload v0.1.11 PowerPlayer-v0.1.11.apk app/build/outputs/apk/debug/app-debug.apk \
               --clobber --repo "${{ github.repository }}"
           else
-            gh release create v0.1.10 app/build/outputs/apk/debug/*.apk \
-              --title "PowerPlayer v0.1.10" \
-              --notes "Бегущая лента исправлена: правая часть — плоская серая тишина (не прыгает), слева от ползунка белая история, на ползунке пульс." \
+            gh release create v0.1.11 PowerPlayer-v0.1.11.apk app/build/outputs/apk/debug/app-debug.apk \
+              --title "PowerPlayer v0.1.11" \
+              --notes "Бегущая лента: неподвижная сетка слотов на всю ширину, белая история заполняет её слева направо, ползунок едет, справа — плоская серая тишина. APK называется PowerPlayer-v0.1.11.apk." \
               --repo "${{ github.repository }}"
           fi

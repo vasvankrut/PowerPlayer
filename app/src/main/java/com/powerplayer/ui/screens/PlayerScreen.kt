@@ -60,6 +60,7 @@ fun PlayerScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val samples by viewModel.samples.collectAsStateWithLifecycle()
+    val energy by viewModel.energy.collectAsStateWithLifecycle()
 
     Box(
         modifier = Modifier
@@ -72,7 +73,7 @@ fun PlayerScreen(
             state.isLoading -> LoadingView()
             !state.folderPicked -> FolderPickerView(onPickFolder)
             state.noTracks -> NoTracksView(onPickFolder)
-            else -> PlayerLayout(state = state, samples = samples, viewModel = viewModel)
+            else -> PlayerLayout(state = state, samples = samples, energy = energy, viewModel = viewModel)
         }
     }
 }
@@ -94,6 +95,7 @@ private fun BackgroundLayer(art: Bitmap?) {
 private fun PlayerLayout(
     state: PlayerUiState,
     samples: List<EnergySample>,
+    energy: Float,
     viewModel: PlayerViewModel
 ) {
     val track = state.tracks.getOrNull(state.currentIndex) ?: return
@@ -157,6 +159,7 @@ private fun PlayerLayout(
                     samples = samples,
                     durationMs = state.durationMs,
                     progressFraction = progress,
+                    liveEnergy = energy,
                     onSeekStart = viewModel::onSeekStart,
                     onSeekPreview = viewModel::onSeekPreview,
                     onSeekCommit = viewModel::onSeekCommit,
