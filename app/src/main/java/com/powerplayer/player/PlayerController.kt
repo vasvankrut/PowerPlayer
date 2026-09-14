@@ -8,6 +8,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import com.powerplayer.viewmodel.EnergySample
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -333,5 +334,120 @@ class PlayerController(private val context: Context) {
         } catch (_: Exception) {
         }
         extractor = null
+    }
+
+    /**
+     * Полный пред-анализ трека: декодирует файл headless (MediaCodec без AudioTrack)
+     * и возвращает амплитудную волну всей песни. Нужен, чтобы визуализатор Poweramp-style
+     * показывал всё будущее трека, а не только уже сыгранную часть.
+     */
+    companion object {
+        fun analyzeTrack(context: Context, uri: Uri, bucketMs: Long = 80L): List<EnergySample> {
+            val ex = MediaExtractor()
+            try {
+                ex.setDataSource(context, uri, null)
+                var trackIdx = -1
+                for (i in 0 until ex.trackCount) {
+                    val mime = ex.getTrackFormat(i).getString(MediaFormat.KEY_MIME)
+                    if (mime != null && mime.startsWith("audio/")) {
+                        trackIdx = i
+                        break
+                    }
+                }
+                if (trackIdx < 0) return emptyList()
+
+                val fmt = ex.getTrackFormat(trackIdx)
+                val durUs = if (fmt.containsKey(MediaFormat.KEY_DURATION)) {
+                    fmt.getLong(MediaFormat.KEY_DURATION)
+                } else 0L
+                ex.selectTrack(trackIdx)
+
+                val bucketCount = if (durUs > 0) {
+                    ((durUs / 1000L + bucketMs - 1) / bucketMs).toInt()
+                } else 4000
+                val capped = bucketCount.coerceIn(1, 8192)
+
+                val sums = FloatArray(capped)
+                val counts = IntArray(capped)
+
+                val codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
+                try {
+                    codec.configure(fmt, null, null, 0)
+                    codec.start()
+                    val info = MediaCodec.BufferInfo()
+                    var inputDone = false
+                    var outputDone = false
+                    while (!outputDone && !Thread.interrupted()) {
+                        if (!inputDone) {
+                            val inIdx = codec.dequeueInputBuffer(5000)
+                            if (inIdx >= 0) {
+                                val inBuf = codec.getInputBuffer(inIdx)!!
+                                val size = ex.readSampleData(inBuf, 0)
+                                if (size < 0) {
+                                    codec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                    inputDone = true
+                                } else {
+                                    codec.queueInputBuffer(inIdx, 0, size, ex.sampleTime, 0)
+                                    ex.advance()
+                                }
+                            }
+                        }
+                        val outIdx = codec.dequeueOutputBuffer(info, 5000)
+                        if (outIdx >= 0) {
+                            if (info.size > 0) {
+                                val outBuf = codec.getOutputBuffer(outIdx)!!
+                                val pcm = ShortArray(info.size / 2)
+                                outBuf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(pcm)
+                                if (pcm.isNotEmpty()) {
+                                    var sumSq = 0.0
+                                    for (s in pcm) {
+                                        val v = s / 32768f
+                                        sumSq += v * v
+                                    }
+                                    val rms = sqrt(sumSq / pcm.size).toFloat()
+                                    val ms = if (info.presentationTimeUs > 0) {
+                                        info.presentationTimeUs / 1000L
+                                    } else 0L
+                                    val bi = ((ms / bucketMs).toInt()).coerceIn(0, capped - 1)
+                                    sums[bi] += rms * rms
+                                    counts[bi]++
+                                }
+                            }
+                            codec.releaseOutputBuffer(outIdx, false)
+                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
+                        }
+                    }
+                } finally {
+                    try {
+                        codec.stop()
+                    } catch (_: Exception) {
+                    }
+                    try {
+                        codec.release()
+                    } catch (_: Exception) {
+                    }
+                }
+
+                var peak = 1e-4f
+                for (i in 0 until capped) {
+                    if (counts[i] > 0) peak = maxOf(peak, sqrt(sums[i] / counts[i]).toFloat())
+                }
+
+                val result = ArrayList<EnergySample>(capped)
+                for (i in 0 until capped) {
+                    if (counts[i] > 0) {
+                        val rms = sqrt(sums[i] / counts[i]).toFloat()
+                        val norm = sqrt((rms / peak).coerceIn(0f, 1f))
+                        result.add(EnergySample(i * bucketMs, norm))
+                    }
+                }
+                return result
+            } finally {
+                try {
+                    ex.release()
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 }

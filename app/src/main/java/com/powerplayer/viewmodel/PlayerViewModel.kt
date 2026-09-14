@@ -59,18 +59,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     init {
         player.onCompletion = { next(auto = true) }
         player.onError = { next(auto = true) }
-        viewModelScope.launch {
-            player.energy.collect { value ->
-                val pos = player.energyPosMs.value
-                _samples.update { list ->
-                    if (list.isNotEmpty() && list.last().positionMs == pos) {
-                        list.dropLast(1) + EnergySample(pos, value)
-                    } else {
-                        list + EnergySample(pos, value)
-                    }
-                }
-            }
-        }
         restoreFolder()
     }
 
@@ -160,9 +148,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val target = (dur * fraction.coerceIn(0f, 1f)).toLong()
         player.seekTo(target)
         _state.update { it.copy(positionMs = target) }
-        _samples.update { list ->
-            list.filter { it.positionMs < target - 700L }
-        }
     }
 
     private fun playTrack(index: Int) {
@@ -182,6 +167,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val bmp = withContext(Dispatchers.IO) { AlbumArt.load(getApplication(), uri, folderUri) }
             if (_state.value.currentIndex == index) {
                 _state.update { it.copy(art = bmp) }
+            }
+        }
+
+        viewModelScope.launch(Dispatchers.Default) {
+            val wave = try {
+                PlayerController.analyzeTrack(getApplication(), uri)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            }
+            if (!Thread.currentThread().isInterrupted && _state.value.currentIndex == index) {
+                _samples.value = wave
             }
         }
 

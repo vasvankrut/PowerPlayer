@@ -38,13 +38,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk PowerPlayer-v0.1.12.apk
-          if gh release view v0.1.12 --repo "${{ github.repository }}" &>/dev/null; then
-            gh release upload v0.1.12 PowerPlayer-v0.1.12.apk app/build/outputs/apk/debug/app-debug.apk \
+          cp app/build/outputs/apk/debug/app-debug.apk PowerPlayer-v0.1.13.apk
+          if gh release view v0.1.13 --repo "${{ github.repository }}" &>/dev/null; then
+            gh release upload v0.1.13 PowerPlayer-v0.1.13.apk app/build/outputs/apk/debug/app-debug.apk \
               --clobber --repo "${{ github.repository }}"
           else
-            gh release create v0.1.12 PowerPlayer-v0.1.12.apk app/build/outputs/apk/debug/app-debug.apk \
-              --title "PowerPlayer v0.1.12" \
-              --notes "Бегущая лента: исправлено сжатие волны к левому краю (убран коэффициент 1.002f в peakInWindow) и прыгающий серый забор справа (будущие слоты — плоские точки 1.5dp). APK называется PowerPlayer-v0.1.12.apk." \
+            gh release create v0.1.13 PowerPlayer-v0.1.13.apk app/build/outputs/apk/debug/app-debug.apk \
+              --title "PowerPlayer v0.1.13" \
+              --notes "Poweramp-style: на экране видна ВСЯ волна трека (полный headless-анализ через MediaCodec) — прошлое ярко-белое, будущее приглушённое, ползунок-игла плавно плывёт по шкале слева направо. APK называется PowerPlayer-v0.1.13.apk." \
               --repo "${{ github.repository }}"
           fi
