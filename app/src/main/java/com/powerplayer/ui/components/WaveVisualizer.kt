@@ -44,7 +44,7 @@ fun WaveVisualizer(
                     onDragStart = { onSeekStart() },
                     onDrag = { change, _ ->
                         change.consume()
-                        lastFraction = (change.position.x / size.width).coerceIn(0f, 1)
+                        lastFraction = (change.position.x / size.width).coerceIn(0f, 1f)
                         onSeekPreview(lastFraction)
                     },
                     onDragEnd = { onSeekCommit(lastFraction) },
