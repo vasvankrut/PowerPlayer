@@ -38,13 +38,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk PowerPlayer-v0.1.13.apk
-          if gh release view v0.1.13 --repo "${{ github.repository }}" &>/dev/null; then
-            gh release upload v0.1.13 PowerPlayer-v0.1.13.apk app/build/outputs/apk/debug/app-debug.apk \
+          cp app/build/outputs/apk/debug/app-debug.apk PowerPlayer-v0.1.14.apk
+          if gh release view v0.1.14 --repo "${{ github.repository }}" &>/dev/null; then
+            gh release upload v0.1.14 PowerPlayer-v0.1.14.apk app/build/outputs/apk/debug/app-debug.apk \
               --clobber --repo "${{ github.repository }}"
           else
-            gh release create v0.1.13 PowerPlayer-v0.1.13.apk app/build/outputs/apk/debug/app-debug.apk \
-              --title "PowerPlayer v0.1.13" \
-              --notes "Poweramp-style: на экране видна ВСЯ волна трека (полный headless-анализ через MediaCodec) — прошлое ярко-белое, будущее приглушённое, ползунок-игла плавно плывёт по шкале слева направо. APK называется PowerPlayer-v0.1.13.apk." \
+            gh release create v0.1.14 PowerPlayer-v0.1.14.apk app/build/outputs/apk/debug/app-debug.apk \
+              --title "PowerPlayer v0.1.14" \
+              --notes "Сейсмограф-окно: на экране скользящее окно ~6с назад + 0.5с вперёд, иголка на фиксированном месте, волна едет под ней. Позади — ярко-белые столбики пика, впереди — полупрозрачные полоски будущего (alpha 0.28), столбик на иголке не гаснет в тишине (max(liveEnergy, peak*0.6, 0.3)) со свечением и тонкой линией, вне трека — серые точки 1.5dp. Тап/drag маппятся в видимое окно. APK называется PowerPlayer-v0.1.14.apk." \
               --repo "${{ github.repository }}"
           fi
