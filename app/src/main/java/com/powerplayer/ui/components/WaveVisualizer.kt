@@ -61,7 +61,7 @@ fun WaveVisualizer(
         modifier = modifier
             .pointerInput(Unit) {
                 detectTapGestures { pos ->
-                    lastFraction = fractionAtX(pos.x, size.width, currentProgress, currentDurationMs)
+                    lastFraction = fractionAtX(pos.x, size.width.toFloat(), currentProgress, currentDurationMs)
                     updSeekStart()
                     updSeekCommit(lastFraction)
                 }
@@ -76,7 +76,7 @@ fun WaveVisualizer(
                     onDrag = { change, _ ->
                         change.consume()
                         lastFraction = fractionFromDrag(
-                            dragStartFraction, dragStartX, change.position.x, size.width, currentDurationMs
+                            dragStartFraction, dragStartX, change.position.x, size.width.toFloat(), currentDurationMs
                         )
                         updSeekPreview(lastFraction)
                     },
