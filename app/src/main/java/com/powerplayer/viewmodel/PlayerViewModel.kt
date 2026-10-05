@@ -31,6 +31,7 @@ data class PlayerUiState(
     val currentIndex: Int = -1,
     val isPlaying: Boolean = false,
     val positionMs: Long = 0L,
+    val positionStampNs: Long = 0L,
     val durationMs: Long = 0L,
     val folderPicked: Boolean = false,
     val isLoading: Boolean = false,
@@ -191,9 +192,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         poller = viewModelScope.launch {
             while (isActive) {
                 if (!dragging) {
+                    // positionStampNs — тот же System.nanoTime(), что читает визуализатор.
+                    // Он знает, позиция «отстаёт» на сколько, и продлевает её вперёд,
+                    // иначе лента едет с постоянным отставанием в четверть секунды.
+                    val stamp = System.nanoTime()
+                    val pos = player.currentPosition()
                     _state.update {
                         it.copy(
-                            positionMs = player.currentPosition(),
+                            positionMs = pos,
+                            positionStampNs = stamp,
                             isPlaying = player.isPlaying()
                         )
                     }
