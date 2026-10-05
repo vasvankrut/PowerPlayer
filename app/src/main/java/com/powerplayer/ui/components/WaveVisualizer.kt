@@ -23,19 +23,55 @@ import androidx.compose.ui.unit.dp
 import com.powerplayer.viewmodel.EnergySample
 
 /**
- * Полоса прогресса в стиле Poweramp: волна ВСЕГО трека на всю ширину экрана,
- * симметричная относительно центральной оси, сыгранное — белое, непроигранное — серое.
- * Тонкие бары со скруглёнными концами, равномерно распределённые от края до края.
- * Высота баров = пик амплитуды из headless-анализа MediaCodec (analyzeTrack), она НИКОГДА
- * не анимируется сама по себе: полоски не прыгают, картинка трека статична и читается.
- * Живой отклик даёт только свечение playhead, яркость которого следует за текущей громкостью.
+ * Waveseek в стиле Poweramp — НЕ статичный: полоса волны едет влево под неподвижной
+ * линией playhead (в Poweramp это дефолтный режим; «Static Waveseek» с зумом-аутом всей
+ * песни — отдельный режим, и именно он выглядит статичным).
+ *
+ * Как это работает:
+ *  - окно времени [currentMs - WINDOW_BACK_MS, currentMs + WINDOW_FORWARD_MS] едет вправо
+ *    по мере воспроизведения, поэтому бары физически уезжают влево за линией;
+ *  - линия playhead всегда на одном месте (PLAYHEAD_FRAC от левого края) и не двигается;
+ *  - слева от линии — сыгранное (белое), справа — непроигранное (серое), граница цвета
+ *    попиксельно проходит по линии;
+ *  - высоты баров — пик амплитуды из headless-анализа MediaCodec (analyzeTrack), то есть
+ *    это реальная форма трека, а не шум;
+ *  - сам столбец под линией никогда не «прыгает» — двигается только сам таймлайн.
  */
 private const val BAR_WIDTH_DP = 3f
 private const val BAR_GAP_DP = 1.5f
+private const val WINDOW_BACK_MS = 6_000L
+private const val WINDOW_FORWARD_MS = 2_000L
+private const val WINDOW_MS = 8_000f // = WINDOW_BACK_MS + WINDOW_FORWARD_MS
 
-private fun fractionAtX(x: Float, width: Float): Float {
-    if (width <= 0f) return 0f
-    return (x / width).coerceIn(0f, 1f)
+/** Неподвижная линия playhead, доля ширины от левого края. */
+private const val PLAYHEAD_FRAC = 0.25f
+
+/** Начало окна в мс при заданной доле трека: так, чтобы линия попадала ровно в currentMs. */
+private fun windowStartMs(fraction: Float, durationMs: Long): Float =
+    durationMs.toFloat() * fraction - PLAYHEAD_FRAC * WINDOW_MS
+
+private fun fractionAtX(
+    x: Float,
+    width: Float,
+    baseFraction: Float,
+    durationMs: Long
+): Float {
+    if (width <= 0f || durationMs <= 0L) return baseFraction
+    val ms = windowStartMs(baseFraction, durationMs) + x * WINDOW_MS / width
+    return (ms / durationMs.toFloat()).coerceIn(0f, 1f)
+}
+
+/** Драг: сдвиг окна задаётся смещением пальца от точки захвата — без накопления ошибки. */
+private fun fractionFromDrag(
+    baseFraction: Float,
+    baseX: Float,
+    x: Float,
+    width: Float,
+    durationMs: Long
+): Float {
+    if (width <= 0f || durationMs <= 0L) return baseFraction
+    val ms = durationMs.toFloat() * baseFraction + (x - baseX) * WINDOW_MS / width
+    return (ms / durationMs.toFloat()).coerceIn(0f, 1f)
 }
 
 @Composable
@@ -50,26 +86,37 @@ fun WaveVisualizer(
     modifier: Modifier = Modifier
 ) {
     var dragFraction by remember { mutableFloatStateOf(0f) }
+    var dragBaseFraction by remember { mutableFloatStateOf(0f) }
+    var dragBaseX by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
 
+    val updDurationMs by rememberUpdatedState(durationMs)
     val updSeekStart by rememberUpdatedState(onSeekStart)
     val updSeekPreview by rememberUpdatedState(onSeekPreview)
     val updSeekCommit by rememberUpdatedState(onSeekCommit)
 
     val target = progressFraction.coerceIn(0f, 1f)
-    // Ползунок едет плавно, а не прыжками по 250мс-обновлениям поллера.
+    // Плавная лента: поллер обновляет позицию раз в 250мс, tween превращает это в
+    // непрерывное скольжение волны, а не в ступеньки.
     val smoothed by animateFloatAsState(
         targetValue = target,
         animationSpec = tween(durationMillis = 260, easing = LinearEasing)
     )
-    val playheadFraction = if (isDragging) dragFraction else smoothed
+    val displayFraction = if (isDragging) dragFraction else smoothed
+    // pointerInput(Unit) не перезапускается — читать позицию окна из gesture-лямбд
+    // можно только через rememberUpdatedState, иначе там останется значение
+    // из самой первой композиции.
+    val updDisplayFraction by rememberUpdatedState(displayFraction)
 
     Canvas(
         modifier = modifier
             .pointerInput(Unit) {
                 detectTapGestures { pos ->
-                    val f = fractionAtX(pos.x, size.width.toFloat())
+                    val f = fractionAtX(
+                        pos.x, size.width.toFloat(), updDisplayFraction, updDurationMs
+                    )
                     dragFraction = f
+                    dragBaseFraction = f
                     updSeekStart()
                     updSeekCommit(f)
                 }
@@ -78,12 +125,17 @@ fun WaveVisualizer(
                 detectDragGestures(
                     onDragStart = { pos ->
                         isDragging = true
-                        dragFraction = fractionAtX(pos.x, size.width.toFloat())
+                        dragBaseX = pos.x
+                        dragBaseFraction = updDisplayFraction
+                        dragFraction = updDisplayFraction
                         updSeekStart()
                     },
                     onDrag = { change, _ ->
                         change.consume()
-                        dragFraction = fractionAtX(change.position.x, size.width.toFloat())
+                        dragFraction = fractionFromDrag(
+                            dragBaseFraction, dragBaseX, change.position.x,
+                            size.width.toFloat(), updDurationMs
+                        )
                         updSeekPreview(dragFraction)
                     },
                     onDragEnd = {
@@ -105,6 +157,7 @@ fun WaveVisualizer(
         val minBar = 2.dp.toPx()
         // maxAmp >= minBar, иначе coerceIn(minBar, maxAmp) бросил бы исключение на низком холсте.
         val maxAmp = (height / 2f - 1.5.dp.toPx()).coerceAtLeast(minBar)
+        val playheadX = width * PLAYHEAD_FRAC
 
         // Анализ ещё идёт (или трек без данных) — тонкая линия вместо пустоты.
         if (durationMs <= 0L || samples.isEmpty()) {
@@ -114,6 +167,12 @@ fun WaveVisualizer(
                 end = Offset(width, centerY),
                 strokeWidth = minBar
             )
+            drawLine(
+                color = Color.White.copy(alpha = 0.7f),
+                start = Offset(playheadX, 0f),
+                end = Offset(playheadX, height),
+                strokeWidth = 1.5.dp.toPx()
+            )
             return@Canvas
         }
 
@@ -122,11 +181,15 @@ fun WaveVisualizer(
         // Шаг считаем от ширины, чтобы сетка заканчивалась ровно у правого края без «забора».
         val step = width / count
         val barWidth = (step - gap).coerceAtLeast(1f)
-        val msPerBar = durationMs.toFloat() / count
-        val playheadX = (width * playheadFraction).coerceIn(0f, width)
+
+        val pxPerMs = width / WINDOW_MS
+        val startMs = windowStartMs(displayFraction, durationMs)
+        val durMs = durationMs.toFloat()
+        val msPerBar = step / pxPerMs
 
         val pastColor = Color.White.copy(alpha = 0.95f)
         val futureColor = Color.White.copy(alpha = 0.30f)
+        val outsideColor = Color.White.copy(alpha = 0.16f)
 
         fun peakIn(lowMs: Float, highMs: Float): Float {
             val a = lowMs.toLong()
@@ -148,12 +211,26 @@ fun WaveVisualizer(
 
         for (i in 0 until count) {
             val x = i * step
-            val peak = peakIn(i * msPerBar, (i + 1) * msPerBar).coerceIn(0f, 1f)
+            val msStart = startMs + x / pxPerMs
+            val msEnd = msStart + msPerBar
+
+            // За пределами трека реальных данных нет — плоские едва заметные точки.
+            if (msEnd <= 0f || msStart >= durMs) {
+                drawRoundRect(
+                    color = outsideColor,
+                    topLeft = Offset(x, centerY - minBar / 2f),
+                    size = Size(barWidth, minBar),
+                    cornerRadius = CornerRadius(minBar / 2f, minBar / 2f)
+                )
+                continue
+            }
+
+            val peak = peakIn(msStart, msEnd).coerceIn(0f, 1f)
             val h = (peak * maxAmp).coerceIn(minBar, maxAmp)
             val top = centerY - h
-
             val left = x
             val right = x + barWidth
+
             if (right <= playheadX) {
                 drawRoundRect(
                     color = pastColor,
@@ -169,7 +246,7 @@ fun WaveVisualizer(
                     cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
                 )
             } else {
-                // Бар под playhead — разрезаем его ровно по границе цвета.
+                // Бар под линией — разрезаем ровно по границе цвета.
                 val playedW = (playheadX - left).coerceAtLeast(0.5f)
                 val restW = (right - playheadX).coerceAtLeast(0.5f)
                 drawRoundRect(
@@ -193,7 +270,7 @@ fun WaveVisualizer(
             }
         }
 
-        // Свечение playhead отражает живую громкость — единственное, что двигается во времени.
+        // Линия неподвижна; пульсирует только её свечение — по текущей громкости.
         val glow = liveEnergy.coerceIn(0f, 1f)
         if (glow > 0.02f) {
             val glowWidth = 7.dp.toPx()

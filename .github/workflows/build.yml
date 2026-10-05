@@ -38,13 +38,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk PowerPlayer-v0.1.15.apk
-          if gh release view v0.1.15 --repo "${{ github.repository }}" &>/dev/null; then
-            gh release upload v0.1.15 PowerPlayer-v0.1.15.apk app/build/outputs/apk/debug/app-debug.apk \
+          cp app/build/outputs/apk/debug/app-debug.apk PowerPlayer-v0.1.16.apk
+          if gh release view v0.1.16 --repo "${{ github.repository }}" &>/dev/null; then
+            gh release upload v0.1.16 PowerPlayer-v0.1.16.apk app/build/outputs/apk/debug/app-debug.apk \
               --clobber --repo "${{ github.repository }}"
           else
-            gh release create v0.1.15 PowerPlayer-v0.1.15.apk app/build/outputs/apk/debug/app-debug.apk \
-              --title "PowerPlayer v0.1.15" \
-              --notes "Волна как в Poweramp: весь трек сразу на всю ширину, симметричные тонкие бары (3dp + зазор 1.5dp) со скруглёнными концами, сыгранное белое (alpha 0.95), непроигранное серое (0.30), бар под playhead разрезан точно по границе цвета. Анализ трека переведён с RMS на пик амплитуды (max abs по 80мс-бакету) — форма сохраняет транзиенты, тихие места слегка подняты кривой 0.85. Скользящее окно ~6с убрано. Полоса волны стала низкой и широкой (112dp), кнопки перенесены под неё, таймкоды — под кнопки. Playhead едет плавно (animateFloatAsState 260мс Linear), живое свечение вокруг него следует за громкостью; высоты баров не анимируются. Тап/драг по любой точке волны = перемотка. APK называется PowerPlayer-v0.1.15.apk." \
+            gh release create v0.1.16 PowerPlayer-v0.1.16.apk app/build/outputs/apk/debug/app-debug.apk \
+              --title "PowerPlayer v0.1.16" \
+              --notes "Волна переделана в движущуюся (дефолтный Waveseek Poweramp), а не статичную. Разбор по официальной справке Poweramp: у него два режима — Static Waveseek (вся песня зумом-аут, по ней едет линия прогресса, выглядит статично) и обычный, где тонкие бары волны скроллятся за НЕПОДВИЖНОЙ линией playhead. Теперь: окно 6с назад + 2с вперёд едет по треку, бары уезжают влево, линия стоит на месте в 25% ширины; слева белое сыгранное, справа серое непроигранное, граница цвета попиксельно по линии; за пределами трека — едва заметные точки 2dp. Данные — реальный пик амплитуды всего трека (analyzeTrack, 80мс-бакеты), так что едет настоящая форма песни, а не шум. Полоса едет непрерывно: animateFloatAsState 260мс Linear сглаживает 250мс-обновления поллера. Высоты баров не анимируются, столбец под линией не прыгает — двигается только таймлайн. Тап = перемотка в точку, драг = относительный сдвиг окна (как свайп по Waveseek в Poweramp). APK называется PowerPlayer-v0.1.16.apk." \
               --repo "${{ github.repository }}"
           fi
