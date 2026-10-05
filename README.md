@@ -46,8 +46,8 @@
 4. `PlayerScreen` читает `state.positionMs/durationMs`, `samples`, `energy` и передаёт в `WaveVisualizer`. Полоса волны — `fillMaxWidth().height(112.dp).padding(horizontal = 20.dp)`, под ней ряд кнопок ◀/Play/▶, под ним таймкоды.
 
 **`WaveVisualizer.kt` — алгоритм отрисовки (текущий):**
-- **Волна движется под неподвижной линией** (дефолтный Waveseek в Poweramp). Окно времени `[currentMs - 6с, currentMs + 2с]` (`WINDOW_BACK_MS`/`WINDOW_FORWARD_MS`) едет вправо по мере воспроизведения → бары уезжают влево. Линия playhead стоит на месте: `PLAYHEAD_FRAC = 0.25f` от левого края.
-- Окно считается так, что линия попадает ровно в текущую позицию: `windowStartMs(f) = duration*f - 0.25*WINDOW_MS`.
+- **Волна движется под неподвижной линией** (дефолтный Waveseek в Poweramp). Окно времени длиной `WINDOW_MS = 8с` едет вправо по мере воспроизведения → бары уезжают влево. Линия стоит на месте: `PLAYHEAD_FRAC = 0.75f`, то есть 6с яркой истории слева и 2с серого будущего справа.
+- Окно считается так, что линия попадает ровно в текущую позицию: `windowStartMs(f) = duration*f - PLAYHEAD_FRAC*WINDOW_MS`.
 - Сетка: `BAR_WIDTH_DP = 3f`, `BAR_GAP_DP = 1.5f`, `count = (width / (barWidth+gap)).toInt().coerceIn(1,512)`; шаг пересчитывается как `width / count`, чтобы сетка заканчивалась ровно у правого края (без «забора» из неполного бара).
 - Бар `i`: окно времени `[msStart, msStart+msPerBar]` → пик по бинарному поиску в `samples` (headless-анализ всего трека). Высота `h = (peak*maxAmp).coerceIn(2.dp, maxAmp)`, рисуется зеркально: `top = centerY - h`, размер `h*2`.
 - Цвет: `pastColor = White@0.95` (левее линии), `futureColor = White@0.30` (правее). Бар под линией разрезается на две части точно по `playheadX` — граница цвета пиксельная. За пределами трека — плоские точки `outsideColor = White@0.16` высотой 2dp.

@@ -43,8 +43,11 @@ private const val WINDOW_BACK_MS = 6_000L
 private const val WINDOW_FORWARD_MS = 2_000L
 private const val WINDOW_MS = 8_000f // = WINDOW_BACK_MS + WINDOW_FORWARD_MS
 
-/** Неподвижная линия playhead, доля ширины от левого края. */
-private const val PLAYHEAD_FRAC = 0.25f
+/**
+ * Неподвижная линия playhead, доля ширины от левого края.
+ * 0.75 → окно = 6с яркой истории слева + 2с серого будущего справа (WINDOW_MS = 8с).
+ */
+private const val PLAYHEAD_FRAC = 0.75f
 
 /** Начало окна в мс при заданной доле трека: так, чтобы линия попадала ровно в currentMs. */
 private fun windowStartMs(fraction: Float, durationMs: Long): Float =
