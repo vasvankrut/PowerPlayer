@@ -154,6 +154,7 @@ private fun PlayerLayout(
                 samples = samples,
                 durationMs = state.durationMs,
                 progressFraction = progress,
+                isPlaying = state.isPlaying,
                 liveEnergy = energy,
                 onSeekStart = viewModel::onSeekStart,
                 onSeekPreview = viewModel::onSeekPreview,

@@ -1,18 +1,17 @@
 package com.powerplayer.ui.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -21,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.powerplayer.viewmodel.EnergySample
+import kotlin.math.abs
 
 /**
  * Waveseek в стиле Poweramp — НЕ статичный: полоса волны едет влево под неподвижной
@@ -28,26 +28,33 @@ import com.powerplayer.viewmodel.EnergySample
  * песни — отдельный режим, и именно он выглядит статичным).
  *
  * Как это работает:
- *  - окно времени [currentMs - WINDOW_BACK_MS, currentMs + WINDOW_FORWARD_MS] едет вправо
- *    по мере воспроизведения, поэтому бары физически уезжают влево за линией;
- *  - линия playhead всегда на одном месте (PLAYHEAD_FRAC от левого края) и не двигается;
+ *  - окно времени длиной WINDOW_MS едет вправо по мере воспроизведения, поэтому бары
+ *    физически уезжают влево за линией;
+ *  - линия playhead стоит РОВНО ПОСЕРЕДИНЕ (PLAYHEAD_FRAC = 0.5) и не двигается;
  *  - слева от линии — сыгранное (белое), справа — непроигранное (серое), граница цвета
  *    попиксельно проходит по линии;
  *  - высоты баров — пик амплитуды из headless-анализа MediaCodec (analyzeTrack), то есть
  *    это реальная форма трека, а не шум;
  *  - сам столбец под линией никогда не «прыгает» — двигается только сам таймлайн.
+ *
+ * Про smoothness: позиция приходит из поллера раз в 250мс. Раньше она сглаживалась
+ * tween'ом, который перезапускался на каждом обновлении — скорость рвалась, отсюда
+ * «дёрганье». Теперь лента живёт по собственным покадровым часам (withFrameNanos),
+ * а к реальной позиции мягко подтягивается с маленьким усилением — движение
+ * непрерывное, но без вечного отставания.
  */
 private const val BAR_WIDTH_DP = 3f
 private const val BAR_GAP_DP = 1.5f
-private const val WINDOW_BACK_MS = 6_000L
-private const val WINDOW_FORWARD_MS = 2_000L
-private const val WINDOW_MS = 8_000f // = WINDOW_BACK_MS + WINDOW_FORWARD_MS
+private const val WINDOW_MS = 8_000f
 
-/**
- * Неподвижная линия playhead, доля ширины от левого края.
- * 0.75 → окно = 6с яркой истории слева + 2с серого будущего справа (WINDOW_MS = 8с).
- */
-private const val PLAYHEAD_FRAC = 0.75f
+/** Неподвижная линия playhead ровно посередине полосы. */
+private const val PLAYHEAD_FRAC = 0.5f
+
+/** Порог, после которого расхождение с реальной позицией гасится мгновенно (перемотка). */
+private const val SNAP_MS = 1_000f
+
+/** Малое усиление коррекции: гасит копирование ступенек поллера, но не дублирует их. */
+private const val SYNC_GAIN = 0.03f
 
 /** Начало окна в мс при заданной доле трека: так, чтобы линия попадала ровно в currentMs. */
 private fun windowStartMs(fraction: Float, durationMs: Long): Float =
@@ -82,6 +89,7 @@ fun WaveVisualizer(
     samples: List<EnergySample>,
     durationMs: Long,
     progressFraction: Float,
+    isPlaying: Boolean,
     liveEnergy: Float,
     onSeekStart: () -> Unit,
     onSeekPreview: (Float) -> Unit,
@@ -92,24 +100,54 @@ fun WaveVisualizer(
     var dragBaseFraction by remember { mutableFloatStateOf(0f) }
     var dragBaseX by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
+    var smoothMs by remember { mutableFloatStateOf(0f) }
 
     val updDurationMs by rememberUpdatedState(durationMs)
     val updSeekStart by rememberUpdatedState(onSeekStart)
     val updSeekPreview by rememberUpdatedState(onSeekPreview)
     val updSeekCommit by rememberUpdatedState(onSeekCommit)
-
-    val target = progressFraction.coerceIn(0f, 1f)
-    // Плавная лента: поллер обновляет позицию раз в 250мс, tween превращает это в
-    // непрерывное скольжение волны, а не в ступеньки.
-    val smoothed by animateFloatAsState(
-        targetValue = target,
-        animationSpec = tween(durationMillis = 260, easing = LinearEasing)
+    val updRealFraction by rememberUpdatedState(progressFraction.coerceIn(0f, 1f))
+    val updPlaying by rememberUpdatedState(isPlaying)
+    val updDragging by rememberUpdatedState(isDragging)
+    val updDragFraction by rememberUpdatedState(dragFraction)
+    // pointerInput(Unit) не перезапускается — из gesture-лямбд позицию окна можно читать
+    // только через rememberUpdatedState, иначе там останется значение первой композиции.
+    val updDisplayFraction by rememberUpdatedState(
+        if (durationMs <= 0L) 0f
+        else (smoothMs / durationMs.toFloat()).coerceIn(0f, 1f)
     )
-    val displayFraction = if (isDragging) dragFraction else smoothed
-    // pointerInput(Unit) не перезапускается — читать позицию окна из gesture-лямбд
-    // можно только через rememberUpdatedState, иначе там останется значение
-    // из самой первой композиции.
-    val updDisplayFraction by rememberUpdatedState(displayFraction)
+
+    // Собственные часы ленты: каждый кадр позиция едет по реальному времени, а к позиции
+    // поллера (шаг 250мс) мягко подтягивается. Перезапуска анимации на каждом обновлении
+    // нет, поэтому скорость не рвётся и лента не дёргается.
+    LaunchedEffect(Unit) {
+        var lastNanos = 0L
+        var started = false
+        while (true) {
+            withFrameNanos { now ->
+                val duration = updDurationMs.toFloat()
+                val realMs = updRealFraction * duration
+                if (!started) {
+                    started = true
+                    lastNanos = now
+                    smoothMs = realMs
+                } else {
+                    val dt = ((now - lastNanos) / 1_000_000f).coerceIn(0f, 200f)
+                    lastNanos = now
+                    if (updDragging) {
+                        smoothMs = updDragFraction * duration
+                    } else {
+                        val next = if (updPlaying) smoothMs + dt else smoothMs
+                        val err = realMs - next
+                        smoothMs = when {
+                            abs(err) > SNAP_MS -> realMs
+                            else -> (next + err * SYNC_GAIN).coerceIn(0f, maxOf(duration, 0f))
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Canvas(
         modifier = modifier
@@ -186,8 +224,10 @@ fun WaveVisualizer(
         val barWidth = (step - gap).coerceAtLeast(1f)
 
         val pxPerMs = width / WINDOW_MS
-        val startMs = windowStartMs(displayFraction, durationMs)
         val durMs = durationMs.toFloat()
+        val displayFraction = if (durationMs <= 0L) 0f
+        else (smoothMs / durMs).coerceIn(0f, 1f)
+        val startMs = windowStartMs(displayFraction, durationMs)
         val msPerBar = step / pxPerMs
 
         val pastColor = Color.White.copy(alpha = 0.95f)
