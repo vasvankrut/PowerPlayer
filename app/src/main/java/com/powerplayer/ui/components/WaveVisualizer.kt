@@ -1,11 +1,15 @@
 package com.powerplayer.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -18,22 +22,20 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.powerplayer.viewmodel.EnergySample
 
-private const val WINDOW_BACK_MS = 6_000L
-private const val WINDOW_FORWARD_MS = 500L
+/**
+ * Полоса прогресса в стиле Poweramp: волна ВСЕГО трека на всю ширину экрана,
+ * симметричная относительно центральной оси, сыгранное — белое, непроигранное — серое.
+ * Тонкие бары со скруглёнными концами, равномерно распределённые от края до края.
+ * Высота баров = пик амплитуды из headless-анализа MediaCodec (analyzeTrack), она НИКОГДА
+ * не анимируется сама по себе: полоски не прыгают, картинка трека статична и читается.
+ * Живой отклик даёт только свечение playhead, яркость которого следует за текущей громкостью.
+ */
+private const val BAR_WIDTH_DP = 3f
+private const val BAR_GAP_DP = 1.5f
 
-private fun fractionAtX(x: Float, width: Float, currentFraction: Float, durationMs: Long): Float {
-    if (width <= 0f || durationMs <= 0L) return 0f
-    val windowDur = (WINDOW_BACK_MS + WINDOW_FORWARD_MS).toFloat()
-    val playheadX = width * (WINDOW_BACK_MS.toFloat() / windowDur)
-    val targetMs = durationMs.toFloat() * currentFraction + (x - playheadX) * windowDur / width
-    return (targetMs / durationMs).coerceIn(0f, 1f)
-}
-
-private fun fractionFromDrag(startFraction: Float, startX: Float, x: Float, width: Float, durationMs: Long): Float {
-    if (width <= 0f || durationMs <= 0L) return startFraction
-    val windowDur = (WINDOW_BACK_MS + WINDOW_FORWARD_MS).toFloat()
-    val targetMs = durationMs.toFloat() * startFraction + (x - startX) * windowDur / width
-    return (targetMs / durationMs).coerceIn(0f, 1f)
+private fun fractionAtX(x: Float, width: Float): Float {
+    if (width <= 0f) return 0f
+    return (x / width).coerceIn(0f, 1f)
 }
 
 @Composable
@@ -47,41 +49,51 @@ fun WaveVisualizer(
     onSeekCommit: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var lastFraction by remember { mutableFloatStateOf(0f) }
-    var dragStartFraction by remember { mutableFloatStateOf(0f) }
-    var dragStartX by remember { mutableFloatStateOf(0f) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
 
-    val currentProgress by rememberUpdatedState(progressFraction)
-    val currentDurationMs by rememberUpdatedState(durationMs)
     val updSeekStart by rememberUpdatedState(onSeekStart)
     val updSeekPreview by rememberUpdatedState(onSeekPreview)
     val updSeekCommit by rememberUpdatedState(onSeekCommit)
+
+    val target = progressFraction.coerceIn(0f, 1f)
+    // Ползунок едет плавно, а не прыжками по 250мс-обновлениям поллера.
+    val smoothed by animateFloatAsState(
+        targetValue = target,
+        animationSpec = tween(durationMillis = 260, easing = LinearEasing)
+    )
+    val playheadFraction = if (isDragging) dragFraction else smoothed
 
     Canvas(
         modifier = modifier
             .pointerInput(Unit) {
                 detectTapGestures { pos ->
-                    lastFraction = fractionAtX(pos.x, size.width.toFloat(), currentProgress, currentDurationMs)
+                    val f = fractionAtX(pos.x, size.width.toFloat())
+                    dragFraction = f
                     updSeekStart()
-                    updSeekCommit(lastFraction)
+                    updSeekCommit(f)
                 }
             }
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { pos ->
-                        dragStartX = pos.x
-                        dragStartFraction = currentProgress
+                        isDragging = true
+                        dragFraction = fractionAtX(pos.x, size.width.toFloat())
                         updSeekStart()
                     },
                     onDrag = { change, _ ->
                         change.consume()
-                        lastFraction = fractionFromDrag(
-                            dragStartFraction, dragStartX, change.position.x, size.width.toFloat(), currentDurationMs
-                        )
-                        updSeekPreview(lastFraction)
+                        dragFraction = fractionAtX(change.position.x, size.width.toFloat())
+                        updSeekPreview(dragFraction)
                     },
-                    onDragEnd = { updSeekCommit(lastFraction) },
-                    onDragCancel = { updSeekCommit(lastFraction) }
+                    onDragEnd = {
+                        updSeekCommit(dragFraction)
+                        isDragging = false
+                    },
+                    onDragCancel = {
+                        updSeekCommit(dragFraction)
+                        isDragging = false
+                    }
                 )
             }
     ) {
@@ -89,33 +101,34 @@ fun WaveVisualizer(
         val height = size.height
         if (width <= 0f || height <= 0f) return@Canvas
 
-        if (durationMs <= 0L) {
+        val centerY = height / 2f
+        val minBar = 2.dp.toPx()
+        // maxAmp >= minBar, иначе coerceIn(minBar, maxAmp) бросил бы исключение на низком холсте.
+        val maxAmp = (height / 2f - 1.5.dp.toPx()).coerceAtLeast(minBar)
+
+        // Анализ ещё идёт (или трек без данных) — тонкая линия вместо пустоты.
+        if (durationMs <= 0L || samples.isEmpty()) {
             drawLine(
-                color = Color.White.copy(alpha = 0.35f),
-                start = Offset(0f, height / 2f),
-                end = Offset(width, height / 2f),
-                strokeWidth = 2f
+                color = Color.White.copy(alpha = 0.25f),
+                start = Offset(0f, centerY),
+                end = Offset(width, centerY),
+                strokeWidth = minBar
             )
             return@Canvas
         }
 
-        val barWidth = 3.5.dp.toPx()
-        val gap = 2.0.dp.toPx()
-        val barStep = barWidth + gap
-        val count = (width / barStep).toInt().coerceIn(1, 512)
-        val maxAmp = height * 0.5f
-        val centerY = height / 2f
-        val cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
-        val dotHeight = 1.5.dp.toPx()
+        val gap = BAR_GAP_DP.dp.toPx()
+        val count = (width / (BAR_WIDTH_DP.dp.toPx() + gap)).toInt().coerceIn(1, 512)
+        // Шаг считаем от ширины, чтобы сетка заканчивалась ровно у правого края без «забора».
+        val step = width / count
+        val barWidth = (step - gap).coerceAtLeast(1f)
+        val msPerBar = durationMs.toFloat() / count
+        val playheadX = (width * playheadFraction).coerceIn(0f, width)
 
-        val windowDur = (WINDOW_BACK_MS + WINDOW_FORWARD_MS).toFloat()
-        val playheadX = width * (WINDOW_BACK_MS.toFloat() / windowDur)
-        val pxPerMs = width / windowDur
-        val currentMs = durationMs.toFloat() * progressFraction.coerceIn(0f, 1f)
-        val playheadSlot = (playheadX / barStep).toInt().coerceIn(0, count - 1)
+        val pastColor = Color.White.copy(alpha = 0.95f)
+        val futureColor = Color.White.copy(alpha = 0.30f)
 
         fun peakIn(lowMs: Float, highMs: Float): Float {
-            if (samples.isEmpty()) return 0f
             val a = lowMs.toLong()
             val b = highMs.toLong()
             var lo = 0
@@ -133,64 +146,69 @@ fun WaveVisualizer(
             return best
         }
 
-        val pastColor = Color.White.copy(alpha = 0.9f)
-        val futureColor = Color.White.copy(alpha = 0.28f)
-        val outsideColor = Color.Gray.copy(alpha = 0.35f)
-
         for (i in 0 until count) {
-            val x = i * barStep
-            val msStart = currentMs + (x - playheadX) / pxPerMs
-            val msEnd = currentMs + (x + barStep - playheadX) / pxPerMs
+            val x = i * step
+            val peak = peakIn(i * msPerBar, (i + 1) * msPerBar).coerceIn(0f, 1f)
+            val h = (peak * maxAmp).coerceIn(minBar, maxAmp)
+            val top = centerY - h
 
-            if (msEnd <= 0f || msStart >= durationMs.toFloat()) {
+            val left = x
+            val right = x + barWidth
+            if (right <= playheadX) {
                 drawRoundRect(
-                    color = outsideColor,
-                    topLeft = Offset(x, centerY - dotHeight / 2f),
-                    size = Size(barWidth, dotHeight),
-                    cornerRadius = CornerRadius(dotHeight / 2f, dotHeight / 2f)
-                )
-                continue
-            }
-
-            val peak = peakIn(msStart, msEnd)
-
-            if (i == playheadSlot) {
-                val factor = maxOf(liveEnergy.coerceIn(0f, 1f), peak * 0.6f, 0.3f)
-                val h = factor * maxAmp
-                drawRoundRect(
-                    color = Color.White.copy(alpha = 0.22f),
-                    topLeft = Offset(x - barWidth, centerY - h * 1.7f),
-                    size = Size(barWidth * 3f, h * 3.4f),
-                    cornerRadius = CornerRadius(barWidth * 1.5f, barWidth * 1.5f)
-                )
-                drawRoundRect(
-                    color = Color.White,
-                    topLeft = Offset(x, centerY - h),
+                    color = pastColor,
+                    topLeft = Offset(left, top),
                     size = Size(barWidth, h * 2f),
-                    cornerRadius = cornerRadius
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
                 )
-                continue
-            }
-
-            val isPast = (msStart + msEnd) * 0.5f <= currentMs
-            val h = if (isPast) {
-                (peak * maxAmp).coerceAtLeast(2f)
+            } else if (left >= playheadX) {
+                drawRoundRect(
+                    color = futureColor,
+                    topLeft = Offset(left, top),
+                    size = Size(barWidth, h * 2f),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                )
             } else {
-                (peak * maxAmp).coerceAtLeast(3f).coerceAtMost(maxAmp * 0.35f)
+                // Бар под playhead — разрезаем его ровно по границе цвета.
+                val playedW = (playheadX - left).coerceAtLeast(0.5f)
+                val restW = (right - playheadX).coerceAtLeast(0.5f)
+                drawRoundRect(
+                    color = pastColor,
+                    topLeft = Offset(left, top),
+                    size = Size(playedW, h * 2f),
+                    cornerRadius = CornerRadius(
+                        (playedW / 2f).coerceAtMost(h),
+                        (playedW / 2f).coerceAtMost(h)
+                    )
+                )
+                drawRoundRect(
+                    color = futureColor,
+                    topLeft = Offset(playheadX, top),
+                    size = Size(restW, h * 2f),
+                    cornerRadius = CornerRadius(
+                        (restW / 2f).coerceAtMost(h),
+                        (restW / 2f).coerceAtMost(h)
+                    )
+                )
             }
-            drawRoundRect(
-                color = if (isPast) pastColor else futureColor,
-                topLeft = Offset(x, centerY - h),
-                size = Size(barWidth, h * 2f),
-                cornerRadius = cornerRadius
-            )
         }
 
+        // Свечение playhead отражает живую громкость — единственное, что двигается во времени.
+        val glow = liveEnergy.coerceIn(0f, 1f)
+        if (glow > 0.02f) {
+            val glowWidth = 7.dp.toPx()
+            drawRoundRect(
+                color = Color.White.copy(alpha = 0.05f + 0.16f * glow),
+                topLeft = Offset(playheadX - glowWidth / 2f, 0f),
+                size = Size(glowWidth, height),
+                cornerRadius = CornerRadius(glowWidth / 2f, glowWidth / 2f)
+            )
+        }
         drawLine(
-            color = Color.White,
-            start = Offset(playheadX, centerY - maxAmp * 0.9f),
-            end = Offset(playheadX, centerY + maxAmp * 0.9f),
-            strokeWidth = 1.dp.toPx()
+            color = Color.White.copy(alpha = 0.9f),
+            start = Offset(playheadX, 0f),
+            end = Offset(playheadX, height),
+            strokeWidth = 1.5.dp.toPx()
         )
     }
 }

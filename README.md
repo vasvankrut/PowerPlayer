@@ -9,29 +9,29 @@
 Чёрно-белый музыкальный плеер для Android (Kotlin + Jetpack Compose, minSdk 26 / target 34).
 - Выбор папки с музыкой через SAF (Storage Access Framework, `ACTION_OPEN_DOCUMENT_TREE`), доступ переоткрывается при старте.
 - **Собственный аудио-конвейер**: `MediaExtractor → MediaCodec → AudioTrack`. PCM-сэмплы в руках плеера — НЕ требуется ни одного разрешения (`MODIFY_AUDIO_SETTINGS`/`RECORD_AUDIO` запрещены пользователем).
-- Визуализация «бегущая лента» (сейсмограф/кардиограмма как в Poweramp): звук пишется ОДНОЙ точкой на линии прогресса и уплывает влево в белую историю; справа от ползунка — серая плоская тишина.
+- Визуализация как в Poweramp: волна **всего трека** на всю ширину экрана (считается headless-анализом MediaCodec), симметричная относительно центра; сыгранное — белое, непроигранное — серое, тонкий белый playhead, тап/драг в любой точке = перемотка.
 
 ## 2. GitHub и релизы
 
 - Репозиторий: `https://github.com/vasvankrut/PowerPlayer` (ветка `main`).
-- **Пуш ТОЛЬКО через** `https://x-access-token:${PAT}@github.com/vasvankrut/PowerPlayer.git` (PAT хранится локально, в репозиторий не коммитить — push protection блокирует).
+- **Пуш ТОЛЬКО через** `https://x-access-token:${PAT}@github.com/vasvankrut/PowerPlayer.git` (PAT хранится локально, в репозиторий не коммитить — push protection блокирует). Пушить разовым URL (`git push https://x-access-token:... main`) безопаснее, чем менять remote: токен не остаётся в `.git/config`.
 - Релизы собираются ТОЛЬКО GitHub Actions (push в `main` запускает `.github/workflows/build.yml` → `assembleDebug` → создаёт/обновляет release + заливает APK).
 - Раннер зелёный, если в релизе `gh release view <tag>` — ассеты: `PowerPlayer-v0.1.x.apk` + `app-debug.apk`.
 - Проверка статуса раннера (пример):
   `curl -s -H "Authorization: Bearer $PAT" "https://api.github.com/repos/vasvankrut/PowerPlayer/actions/runs?per_page=1"`
-- Список вышедших релизов: v0.1.0-alpha … v0.1.11 (история фиксов — в разделе 7).
+- Список вышедших релизов: v0.1.0-alpha … v0.1.15 (история фиксов — в разделе 7).
 
-## 3. Текущее состояние (актуально на v0.1.11)
+## 3. Текущее состояние (актуально на v0.1.15)
 
 **Работает:**
 - Выбор/запоминание папки, сканирование MP3/FLAC, список, prev/play/next, перемотка по тапу и драгу по волне.
-- Обложка на всю высоту с пре-блюром фона (не ч/б — цветной), текст трека снизу слева поверх градиента.
-- Свой декодер, громкость (RMS) пишется в историю сэмплов.
-- Визуализатор «бегущая лента»: неподвижная сетка слотов, ползунок едет слева направо.
+- Обложка на всю высоту верхней половины с пре-блюром фона (не ч/б — цветной), текст трека снизу слева поверх градиента.
+- Свой декодер; живая громкость (RMS) идёт в свечение ползунка.
+- Визуализатор Poweramp-стиля: вся форма песни видна сразу, ползунок едет слева направо.
 
-**Последний коммит:** `71c45e5` = v0.1.11 (релиз `https://github.com/vasvankrut/PowerPlayer/releases/tag/v0.1.11`).
+**Последний коммит:** `v0.1.15` — волна переписана на полнотрековую Poweramp-волну, анализ переведён с RMS на пик амплитуды, кнопки перенесены под полосу волны.
 
-## 4. Визуализатор — как устроено сейчас (v0.1.11)
+## 4. Визуализатор — как устроено сейчас (v0.1.15)
 
 Файлы:
 - `app/src/main/java/com/powerplayer/player/PlayerController.kt`
@@ -40,34 +40,33 @@
 - `app/src/main/java/com/powerplayer/ui/screens/PlayerScreen.kt`
 
 **Цепочка данных:**
-1. `PlayerController.appendPcm(pcm, info.presentationTimeUs)` — вызывается на каждый буфер из декодера. Считает RMS громкости, нормализует по бегущему пику (`energyPeak`, распад `*0.995f`), сглаживает (`energySmooth += (rms-energySmooth)*0.55f`), пишет:
-   - `_energy.value = sqrt(energySmooth)` — живое значение 0..1 (для пульса ползунка);
-   - `_energyPosMs.value = presentationTimeUs/1000L` — **позиция сэмпла берётся из `info.presentationTimeUs` декодера** (реальное аудио-время). ВАЖНО: не `currentPosition()` — он отстаёт из-за буферизации AudioTrack, из-за этого в v0.1.10 история «сжималась слева».
-2. `PlayerViewModel` коллектит `player.energy` → в `_samples` (список `EnergySample(positionMs, value)`; одинаковые позиции заменяются). При `onSeekCommit` сэмплы обрезаются `positionMs < target - 700L`. При смене трека — `_samples.value = emptyList()`.
-3. `PlayerScreen` читает `state.positionMs/durationMs` (польер каждые 250мс), `samples`, `energy` и передаёт в `WaveVisualizer`.
+1. `PlayerController.analyzeTrack(context, uri, bucketMs = 80L)` — **headless-анализ всего трека** (MediaExtractor + MediaCodec БЕЗ AudioTrack) в момент `playTrack`. Считает в каждом бакете **максимум модуля сэмпла** (`maxAbs`), нормализует по глобальному пику и слегка поднимает тихие участки: `value = (peak/globalPeak).pow(0.85f)`. Возвращает `List<EnergySample>`, отсортированный по `positionMs` (шаг 80мс, ~3000 точек на 4-минутный трек). Считается в `Dispatchers.Default`, результат кладётся в `_samples`.
+2. `PlayerController.appendPcm(pcm, presentationTimeUs)` — на каждом буфере основного конвейера считает RMS, нормализует по бегущему пику, сглаживает и публикует `_energy.value = sqrt(energySmooth)` (0..1). Это **только** живое свечение playhead, в `_samples` оно больше не пишется.
+3. `PlayerViewModel` держит `_samples` (пусто при старте трека, затем результат анализа), `energy`, и `poller` каждые 250мс пишет `positionMs = player.currentPosition()`.
+4. `PlayerScreen` читает `state.positionMs/durationMs`, `samples`, `energy` и передаёт в `WaveVisualizer`. Полоса волны — `fillMaxWidth().height(112.dp).padding(horizontal = 20.dp)`, под ней ряд кнопок ◀/Play/▶, под ним таймкоды.
 
-**`WaveVisualizer.kt` — алгоритм отрисовки (требования пользователя, не нарушать):**
-- Сетка слотов НЕПОДВИЖНА на всю ширину: `barWidth = 3.5.dp`, `gap = 2.dp`, `count = (width / (barWidth+gap)).toInt().coerceIn(8,512)`.
-- `currentIndex = (count * progressFraction).toInt().coerceIn(0, count-1)` — позиция ползунка, едет слева направо.
-- `history = samples.filter { it.positionMs <= currentMs }`, где `currentMs = durationMs * progressFraction` — НЕ сыгранные сэмплы исключены.
-- В цикле `for (i in 0 until count)`, `x = i * (barWidth+gap)`:
-  - `i < currentIndex` — белая (`Color.White`, история alpha 0.92) зафиксированная высота = `peakInWindow(lo,hi) * maxAmp` (бинарный поиск по `history`, окно `[i*tpb,(i+1)*tpb)`, tpb = durationMs/count);
-  - `i == currentIndex` — полоска пульсирует от `liveEnergy` (параметр `liveEnergy`), цвет чистый белый + мягкое свечение (3x ширина, alpha 0.25);
-  - `i > currentIndex` — **высота ВСЕГДА 0** (серая `Color(0xFF9E9E9E)` alpha 0.38, мин. 1.5px «точки») — плоская тишина до конца экрана;
-- Тап = seek в точку, драг = превью/коммит (обработчики в этом же Canvas).
+**`WaveVisualizer.kt` — алгоритм отрисовки (текущий):**
+- **Весь трек на всю ширину.** `msPerBar = durationMs / count`; бар `i` = пик сэмплов в окне `[i*msPerBar, (i+1)*msPerBar]` (бинарный поиск по отсортированному `samples`).
+- Сетка: `BAR_WIDTH_DP = 3f`, `BAR_GAP_DP = 1.5f`, `count = (width / (barWidth+gap)).toInt().coerceIn(1,512)`; шаг потом пересчитывается как `width / count`, чтобы сетка заканчивалась ровно у правого края (без «забора» из неполного бара).
+- Симметрия: `top = centerY - h`, высота `h*2`; `h = (peak * maxAmp).coerceIn(2.dp, maxAmp)`, `maxAmp = height/2 - 1.5.dp`.
+- Цвет: `pastColor = White@0.95` (сыгранное), `futureColor = White@0.30` (непроигранное, серое на чёрном). Бар, под которым лежит playhead, разрезается на две части точно по `playheadX` — граница цвета пиксельная, без ступеньки.
+- Playhead: белая линия 1.5dp на всю высоту + мягкое свечение 7dp, альфа которого следует за `liveEnergy` (`0.05 + 0.16*energy`).
+- Плавность: `animateFloatAsState(progress, tween(260ms, LinearEasing))`, чтобы ползунок ехал непрерывно, а не ступенями по 250мс-обновлениям поллера. Во время драга анимация отключается (`isDragging`), playhead идёт ровно за пальцем.
+- Тап = seek в точку, драг = превью + коммит. Маппинг абсолютный: `fraction = x / width`.
+- Пока `samples` пуст (анализ ещё идёт) — тонкая серая линия 2dp вместо пустоты.
 
-**Жёсткие требования пользователя (история всех итераций):**
-- НЕ анимировать полоски вверх-вниз на фиксированных местах. FFT-спектр (v0.1.8) и статичная «волна с цветовым разделением» — отвергнуты.
-- Справа от ползунка НИЧЕГО не прыгает — плоская серая линия/точки 1-2px.
-- Слева — ярко-белая история, полоски 3-4px с зазорами 2px, не сливаться в «расчёску».
+**Жёсткие требования пользователя (текущие, не нарушать):**
+- Высоты баров НЕ анимируются: волна статична, форма песни должна читаться. Анимируется только свечение у playhead.
+- Никакого FFT-спектра и никаких полосок, «прыгающих» вверх-вниз (v0.1.8 и скользящее окно v0.1.9–v0.1.14 — отвергнуты как «не как в Poweramp»).
+- Полоса низкая и широкая (пропорции Poweramp), а не высокая «расчёска».
+- Слева ярко-белое, справа серое, граница — ровно по ползунку.
 - Ползунок обязан плавно ехать вправо по мере воспроизведения.
-- Кнопки ◀/Play/▶ поверх визуализатора, прозрачные, без подложек.
-- Обложка снизу слева, папка запоминается, пре-блюр, цветной фон (не ч/б), размытие усилено — всё это уже одобрено.
+- Обложка сверху с пре-блюром цветного фона, текст снизу слева — одобрено и не трогается.
 
 **Известные остаточные риски:**
-- `presentationTimeUs` от кодеков может быть не от 0 (обрезка: `_energyPosMs` пока не клампится в duration — проверить на реальных файлах).
-- Позиция ползунка (`state.positionMs` из `playbackHeadPosition`) и позиция сэмплов (`presentationTimeUs`) — две независимые шкалы; на практике совпадают, но при буферизации может расходиться на ~0.5с.
-- Сэмплы копятся весь трек (каждый буфер ≈ 20-25мс) — для 4-минутного трека ~10k сэмплов; `peakInWindow` (бинарный поиск) вызывается на каждый слот (~count раз за кадр) — потенциально дорого, при лагах добавить downsampling в ViewModel.
+- `analyzeTrack` декодирует трек целиком при каждом переключении — на длинных треках это заметная задержка до отрисовки волны (показывается тонкая линия). Кэш по URI ещё не добавлен.
+- `presentationTimeUs` от кодеков может быть не от 0 — если у части файлов время стартует не с нуля, бакеты сместятся (лечится вычитанием минимального `presentationTimeUs` в анализе).
+- `_energy` (живое свечение) и `samples` (волна) считаются независимо — расхождение по времени между ними не влияет на форму волны, только на свечение.
 
 ## 5. Архитектура и ключевые места кода
 
@@ -78,11 +77,12 @@ app/src/main/java/com/powerplayer/
       play(uri, onPrepared)      — stopInternal, сброс состояния, decodeThread
       decodeLoop()               — ввод/вывод буферов, пауза-петля, maybeSeek, onCompletion
       maybeSeek()                — ex.seekTo + cd.flush + at.flush, сброс seekBase*/energyPeak
-      appendPcm(pcm, ptUs)       — RMS → _energy + _energyPosMs (см. раздел 4)
+      appendPcm(pcm, ptUs)       — RMS → _energy (только свечение playhead)
       currentPosition()          — seekBaseMs + (playbackHeadPosition-seekBaseFrames)*1000/sampleRate
+      analyzeTrack(ctx, uri)     — companion: headless-анализ всего трека по пикам (см. раздел 4)
   viewmodel/PlayerViewModel.kt — PlayerUiState, EnergySample, _samples, poller 250мс, seek-логика
-  ui/components/WaveVisualizer.kt — Canvas, бегущая лента (раздел 4)
-  ui/screens/PlayerScreen.kt   — обложка+текст, WaveVisualizer, кнопки поверх, таймкоды
+  ui/components/WaveVisualizer.kt — Canvas, полнотрековая волна Poweramp (раздел 4)
+  ui/screens/PlayerScreen.kt   — обложка+текст, WaveVisualizer, ряд кнопок под волной, таймкоды
   ui/CoverFx.kt                — пре-блюр фона
   ui/theme/Color.kt            — Black/White/WhiteDim(0x80)/WhiteFaint(0x33)/Error
   data/TrackScanner.kt         — рекурсивный обход SAF, MP3/FLAC/WAV/OGG/AAC/M4A
@@ -91,8 +91,8 @@ app/src/main/java/com/powerplayer/
 ```
 
 - Версии: `app/build.gradle.kts` — compileSdk 34, kotlinCompilerExtensionVersion 1.5.6, compose-bom 2023.10.01, material-icons-extended.
-- Локальный SDK: `/opt/android-sdk` (platforms/android-34, build-tools 34.0.0), `local.properties` уже есть (`sdk.dir=/opt/android-sdk`).
-- Локальная сборка: `./gradlew assembleDebug` — долгая (первый прогон до ~16 мин; пользователь обычно прерывает — тогда полагаемся на GitHub Actions). Установка: `adb install app/build/outputs/apk/debug/app-debug.apk`.
+- **Локальной сборки на этой машине нет**: Android SDK не установлен, `local.properties` отсутствует (в репозитории его и не должно быть). Сборка и релиз — только через GitHub Actions.
+- Установка на устройство: `adb install app/build/outputs/apk/debug/app-debug.apk` (APK качать из ассетов релиза).
 
 ## 6. API-ключи / секреты
 
@@ -113,7 +113,11 @@ app/src/main/java/com/powerplayer/
 | v0.1.8 | FFT-спектр, 96 баров (позже отвергнут пользователем) |
 | v0.1.9 | «бегущая лента»: громкость одной точкой у ползунка, история слева, тишина справа |
 | v0.1.10 | фикс «забора»: будущее справа всегда 0; история фильтруется по `positionMs <= currentMs` |
-| v0.1.11 | фикс «сжатия слева»: позиция сэмпла = `info.presentationTimeUs`; неподвижная сетка слотов; `currentIndex = count*progressFraction`; пульс от `liveEnergy`; APK в релизе = `PowerPlayer-v0.1.11.apk` |
+| v0.1.11 | фикс «сжатия слева»: позиция сэмпла = `info.presentationTimeUs`; неподвижная сетка слотов; `currentIndex = count*progressFraction`; пульс от `liveEnergy` |
+| v0.1.12 | фикс сжатия слева + серые точки вне трека (1.5dp) |
+| v0.1.13 | headless-анализ всего трека → видна форма песни целиком; починен `StrokeCap`-импорт |
+| v0.1.14 | сейсмограф-окно 6с назад + 0.5с вперёд, волна едет под неподвижной иголкой; починен `pointerInput size.width` (Int→Float) |
+| **v0.1.15** | **полнотрековая волна как в Poweramp**: скользящее окно убрано, бары 3dp+1.5dp на всю ширину, `step = width/count`, бар под playhead разрезан по границе цвета, анализ по пику амплитуды вместо RMS + кривая 0.85, playhead с анимацией 260мс и живым свечением, полоса 112dp, кнопки под волной, таймкоды под кнопками |
 
 **Что обычно ждёт пользователь от релиза:** закоммитить (`git add -A && git commit -m "vX.Y.Z: ..."`), запушить через URL с PAT, дождаться зелёного раннера, проверить ассеты релиза, сообщить ссылку.
 
@@ -121,13 +125,15 @@ app/src/main/java/com/powerplayer/
 
 - Пользователь пишет по-русски, кратко, императивно («делай»).
 - Он сам разворачивает APK на устройстве и смотрит результат — обратную связь даёт в следующем сообщении (часто «снова сломалось»).
-- Чувствителен к деталям визуала: «полоски не прыгают», «не сливается в расчёску», «справа тишина», «ползунок едет вправо». НЕ отклоняться от этих требований без явного разрешения.
+- Чувствителен к деталям визуала. НЕ отклоняться от требований раздела 4 без явного разрешения.
+- Если референс приложен картинкой — картинка может не долететь; тогда стоит уточнить вид, а не угадывать (в сессии v0.1.15 так и вышло: «сделай весь визуал как у поверамп»).
 - Если что-то неясно — краткий вопрос/предложение вместо самовольных решений.
 
 ## 9. На что смотреть при «сломалось»
 
-1. Соблюдены ли требования раздела 4 (прыжки/сжатие/пульс/серые будущие слоты).
-2. Правильность позиции сэмплов: `_energyPosMs` берётся из `presentationTimeUs` (а не `currentPosition()`).
-3. Не разорвана ли цепочка `energy → samples → WaveVisualizer` (имена параметров/полей в PlayerScreen).
-4. Не сбиты ли `versionCode`/`versionName` и тэг в workflow (должны совпадать).
-5. Зелёный ли раннер (раздел 2).
+1. Соблюдены ли требования раздела 4 (статичные высоты, симметрия, белое/серое по ползунку, плавный playhead).
+2. Есть ли `samples` вообще: пустой список = упал `analyzeTrack` (проверить try/catch в `playTrack` и лог MediaCodec).
+3. Порядок `samples` по `positionMs` — от него зависит бинарный поиск `peakIn` (должен быть строго возрастающий).
+4. `maxAmp >= minBar`, иначе `coerceIn` бросит IllegalArgumentException на низком холсте.
+5. Не сбиты ли `versionCode`/`versionName` и тэг в workflow (должны совпадать).
+6. Зелёный ли раннер (раздел 2).

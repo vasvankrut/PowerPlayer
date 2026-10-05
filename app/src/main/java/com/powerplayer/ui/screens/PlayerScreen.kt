@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -143,73 +143,71 @@ private fun PlayerLayout(
             }
         }
 
-        // ── Нижняя половина: волна, поверх неё кнопки, под ней таймкоды ──
+        // ── Нижняя половина: полоса волны во всю ширину, под ней кнопки, под ними таймкоды ──
         Column(
             Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .padding(bottom = 24.dp)
         ) {
-            Box(
-                Modifier
+            WaveVisualizer(
+                samples = samples,
+                durationMs = state.durationMs,
+                progressFraction = progress,
+                liveEnergy = energy,
+                onSeekStart = viewModel::onSeekStart,
+                onSeekPreview = viewModel::onSeekPreview,
+                onSeekCommit = viewModel::onSeekCommit,
+                modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-            ) {
-                WaveVisualizer(
-                    samples = samples,
-                    durationMs = state.durationMs,
-                    progressFraction = progress,
-                    liveEnergy = energy,
-                    onSeekStart = viewModel::onSeekStart,
-                    onSeekPreview = viewModel::onSeekPreview,
-                    onSeekCommit = viewModel::onSeekCommit,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.85f)
-                        .padding(horizontal = 28.dp)
-                )
+                    .height(112.dp)
+                    .padding(horizontal = 20.dp)
+            )
 
-                Row(
-                    modifier = Modifier.align(Alignment.Center),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(40.dp)
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(40.dp)
+            ) {
+                IconButton(
+                    onClick = viewModel::prev,
+                    modifier = Modifier.size(52.dp)
                 ) {
-                    IconButton(
-                        onClick = viewModel::prev,
-                        modifier = Modifier.size(52.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.SkipPrevious,
-                            contentDescription = null,
-                            tint = White,
-                            modifier = Modifier.size(44.dp)
-                        )
-                    }
-                    IconButton(
-                        onClick = viewModel::togglePlay,
-                        modifier = Modifier.size(84.dp)
-                    ) {
-                        Icon(
-                            if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = null,
-                            tint = White,
-                            modifier = Modifier.size(64.dp)
-                        )
-                    }
-                    IconButton(
-                        onClick = viewModel::next,
-                        modifier = Modifier.size(52.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.SkipNext,
-                            contentDescription = null,
-                            tint = White,
-                            modifier = Modifier.size(44.dp)
-                        )
-                    }
+                    Icon(
+                        Icons.Filled.SkipPrevious,
+                        contentDescription = null,
+                        tint = White,
+                        modifier = Modifier.size(44.dp)
+                    )
+                }
+                IconButton(
+                    onClick = viewModel::togglePlay,
+                    modifier = Modifier.size(84.dp)
+                ) {
+                    Icon(
+                        if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        tint = White,
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
+                IconButton(
+                    onClick = viewModel::next,
+                    modifier = Modifier.size(52.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.SkipNext,
+                        contentDescription = null,
+                        tint = White,
+                        modifier = Modifier.size(44.dp)
+                    )
                 }
             }
+
+            Spacer(Modifier.height(10.dp))
 
             Row(
                 Modifier

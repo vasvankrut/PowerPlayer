@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.nio.ByteOrder
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
@@ -367,8 +368,9 @@ class PlayerController(private val context: Context) {
                 } else 4000
                 val capped = bucketCount.coerceIn(1, 8192)
 
-                val sums = FloatArray(capped)
-                val counts = IntArray(capped)
+                // Poweramp рисует волну по пику (max |sample|) в бакете, а не по RMS:
+                // так сохраняются транзиенты и форма кривой получается «живой», а не сплющенной.
+                val peaks = FloatArray(capped)
 
                 val codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
                 try {
@@ -399,18 +401,16 @@ class PlayerController(private val context: Context) {
                                 val pcm = ShortArray(info.size / 2)
                                 outBuf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(pcm)
                                 if (pcm.isNotEmpty()) {
-                                    var sumSq = 0.0
+                                    var maxAbs = 0f
                                     for (s in pcm) {
-                                        val v = s / 32768f
-                                        sumSq += v * v
+                                        val a = if (s < 0) -s.toFloat() else s.toFloat()
+                                        if (a > maxAbs) maxAbs = a
                                     }
-                                    val rms = sqrt(sumSq / pcm.size).toFloat()
                                     val ms = if (info.presentationTimeUs > 0) {
                                         info.presentationTimeUs / 1000L
                                     } else 0L
                                     val bi = ((ms / bucketMs).toInt()).coerceIn(0, capped - 1)
-                                    sums[bi] += rms * rms
-                                    counts[bi]++
+                                    if (maxAbs > peaks[bi]) peaks[bi] = maxAbs
                                 }
                             }
                             codec.releaseOutputBuffer(outIdx, false)
@@ -430,14 +430,15 @@ class PlayerController(private val context: Context) {
 
                 var peak = 1e-4f
                 for (i in 0 until capped) {
-                    if (counts[i] > 0) peak = maxOf(peak, sqrt(sums[i] / counts[i]).toFloat())
+                    if (peaks[i] > peak) peak = peaks[i]
                 }
 
                 val result = ArrayList<EnergySample>(capped)
                 for (i in 0 until capped) {
-                    if (counts[i] > 0) {
-                        val rms = sqrt(sums[i] / counts[i]).toFloat()
-                        val norm = sqrt((rms / peak).coerceIn(0f, 1f))
+                    if (peaks[i] > 0f) {
+                        // Лёгкий подъём тихих участков (кривая 0.85), чтобы тишина не выглядела
+                        // пустым местом, но громкие части всё равно оставались главными.
+                        val norm = (peaks[i] / peak).coerceIn(0f, 1f).pow(0.85f)
                         result.add(EnergySample(i * bucketMs, norm))
                     }
                 }
